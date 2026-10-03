@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { supabase } from '@/utils/supabase';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import confetti from 'canvas-confetti';
 
 function DashboardContent() {
   const searchParams = useSearchParams();
@@ -20,6 +21,9 @@ function DashboardContent() {
   
   const [pastReports, setPastReports] = useState<any[]>([]);
   const [showPast, setShowPast] = useState<boolean>(false);
+
+  // ★ 레벨업 모달창 노출 여부를 관리하는 상태 변수 추가
+  const [showLevelUpModal, setShowLevelUpModal] = useState<boolean>(false);
 
   const reportRef = useRef<HTMLDivElement>(null);
 
@@ -108,13 +112,44 @@ function DashboardContent() {
         
         setPastReports(prev => [newReportObj, ...prev]);
         
-        const gainedExp = files.length * 50;
+        // 1. '위험' 키워드 감지 및 보너스 경험치 부여
+        const hasDanger = resData.report.includes('위험');
+        if (hasDanger) {
+          alert('⚠️ 위험 요소 발견! 안전 기여 보너스 10 EXP가 지급되었습니다.');
+        }
+        
+        const bonusExp = hasDanger ? 10 : 0;
+        const gainedExp = (files.length * 5) + bonusExp; 
         const nextExp = exp + gainedExp;
-        const nextLevel = Math.floor(nextExp / 100) + 1;
+        
+        // 2. 기하급수적 RPG 레벨 계산식 적용
+        let tempExp = nextExp;
+        let calculatedLevel = 1;
+        let requiredExp = 100;
+        
+        while (tempExp >= requiredExp) {
+          tempExp -= requiredExp;
+          calculatedLevel++;
+          requiredExp *= 2; 
+        }
+
+        // 3. 레벨업 달성 시 폭죽 이펙트 및 모달창 실행
+        if (calculatedLevel > level) {
+          setShowLevelUpModal(true); // 팝업창 띄우기
+          confetti({
+            particleCount: 150,
+            spread: 70,
+            origin: { y: 0.6 },
+            colors: ['#2563eb', '#ec1c24', '#f59e0b']
+          });
+          
+          // 5초 뒤에 모달창 자동 닫기 (선택 사항)
+          setTimeout(() => setShowLevelUpModal(false), 5000);
+        }
 
         setExp(nextExp);
-        setLevel(nextLevel);
-        await supabase.from('workers').update({ exp: nextExp, level: nextLevel }).eq('id', workerId);
+        setLevel(calculatedLevel);
+        await supabase.from('workers').update({ exp: nextExp, level: calculatedLevel }).eq('id', workerId);
       }
     } catch (error: any) {
       console.error(error);
@@ -160,8 +195,8 @@ function DashboardContent() {
 
   const MarkdownComponents = {
     table: ({node, ...props}: any) => <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', margin: '16px 0', minWidth: '400px' }} {...props} /></div>,
-    th: ({node, ...props}: any) => <th style={{ border: '1px solid #cbd5e1', background: '#f8fafc', padding: '10px', textAlign: 'left', fontWeight: 'bold' }} {...props} />,
-    td: ({node, ...props}: any) => <td style={{ border: '1px solid #cbd5e1', padding: '10px' }} {...props} />,
+    th: ({node, ...props}: any) => <th style={{ border: '1px solid #cbd5e1', background: '#f8fafc', padding: '10px', textAlign: 'left', fontWeight: 'bold', wordBreak: 'keep-all' }} {...props} />,
+    td: ({node, ...props}: any) => <td style={{ border: '1px solid #cbd5e1', padding: '10px', wordBreak: 'keep-all' }} {...props} />,
     h3: ({node, ...props}: any) => <h3 style={{ fontSize: '16px', color: '#1e293b', marginTop: '20px', marginBottom: '8px' }} {...props} />,
     ul: ({node, ...props}: any) => <ul style={{ paddingLeft: '20px', margin: '8px 0' }} {...props} />,
   };
@@ -169,10 +204,30 @@ function DashboardContent() {
   return (
     <div style={{ width: '100%', maxWidth: '640px', margin: '0 auto', padding: '16px', boxSizing: 'border-box', fontFamily: 'sans-serif', position: 'relative' }}>
       
-      {/* 1. 회전 애니메이션 전역 선언 */}
-      <style dangerouslySetInnerHTML={{ __html: `@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}} />
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes popIn { 0% { transform: scale(0.8); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+      `}} />
 
-      {/* 2. 순수 CSS 로딩 스피너 및 오버레이 */}
+      {/* ★ 레벨업 축하 팝업 모달창 UI */}
+      {showLevelUpModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '20px', textAlign: 'center', animation: 'popIn 0.5s ease-out', margin: '20px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
+            <div style={{ fontSize: '60px', marginBottom: '16px' }}>🎉</div>
+            <h2 style={{ fontSize: '24px', fontWeight: 'bold', color: '#2563eb', marginBottom: '8px' }}>축하합니다!</h2>
+            <p style={{ fontSize: '18px', color: '#334155', marginBottom: '24px' }}>
+              새로운 레벨 <span style={{ color: '#ec1c24', fontWeight: 'bold' }}>Lv.{level}</span> 달성!
+            </p>
+            <button 
+              onClick={() => setShowLevelUpModal(false)} 
+              style={{ width: '100%', padding: '14px', backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}
+            >
+              확인
+            </button>
+          </div>
+        </div>
+      )}
+
       {analyzing && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.75)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ width: '60px', height: '60px', border: '5px solid rgba(255,255,255,0.2)', borderTop: '5px solid #3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '24px' }} />
@@ -183,7 +238,6 @@ function DashboardContent() {
         </div>
       )}
 
-      {/* 상단 프로필 */}
       <div style={{ padding: '16px', borderRadius: '12px', background: '#f1f5f9', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px', boxSizing: 'border-box' }}>
         <div style={{ fontSize: '36px', padding: '8px', background: 'white', borderRadius: '50%', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
           {level === 1 ? '🐣' : level < 3 ? '👷' : '🦸‍♂️'}
@@ -200,11 +254,11 @@ function DashboardContent() {
         </div>
       </div>
 
-      {/* 사진 추가 영역 */}
       <div style={{ marginBottom: '16px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px 20px', background: '#ffffff', borderRadius: '12px', cursor: 'pointer', border: '2px dashed #94a3b8', width: '100%', boxSizing: 'border-box' }}>
           <span style={{ fontSize: '32px', marginBottom: '12px' }}>📸</span>
           <span style={{ fontWeight: 'bold', color: '#334155', fontSize: '16px' }}>터치하여 현장 사진 추가하기</span>
+          <span style={{ fontSize: '13px', color: '#94a3b8', marginTop: '8px' }}>여러 장 선택 가능</span>
           <input type="file" accept="image/*" multiple onChange={handleFileChange} style={{ display: 'none' }} />
         </label>
         
@@ -212,37 +266,34 @@ function DashboardContent() {
           <div style={{ display: 'flex', gap: '12px', overflowX: 'auto', padding: '12px 0' }}>
             {previewUrls.map((url, idx) => (
               <div key={idx} style={{ position: 'relative', flexShrink: 0 }}>
-                <img src={url} alt={`미리보기 ${idx}`} style={{ height: '100px', width: '100px', borderRadius: '8px', objectFit: 'cover' }} />
-                <button onClick={() => removeFile(idx)} style={{ position: 'absolute', top: '4px', right: '4px', background: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', borderRadius: '50%', width: '24px', height: '24px' }}>✕</button>
+                <img src={url} alt={`미리보기 ${idx+1}`} style={{ height: '100px', width: '100px', borderRadius: '8px', objectFit: 'cover', border: '1px solid #e2e8f0' }} />
+                <button onClick={() => removeFile(idx)} style={{ position: 'absolute', top: '4px', right: '4px', background: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px' }}>✕</button>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* 분석 실행 버튼 */}
-      <button onClick={handleUploadAndAnalyze} disabled={analyzing || files.length === 0} style={{ width: '100%', padding: '16px', fontSize: '16px', fontWeight: 'bold', color: '#ffffff', backgroundColor: analyzing ? '#94a3b8' : (files.length === 0 ? '#cbd5e1' : '#2563eb'), border: 'none', borderRadius: '12px', cursor: analyzing || files.length === 0 ? 'not-allowed' : 'pointer' }}>
+      <button onClick={handleUploadAndAnalyze} disabled={analyzing || files.length === 0} style={{ width: '100%', padding: '16px', fontSize: '16px', fontWeight: 'bold', color: '#ffffff', backgroundColor: analyzing ? '#94a3b8' : (files.length === 0 ? '#cbd5e1' : '#2563eb'), border: 'none', borderRadius: '12px', cursor: analyzing || files.length === 0 ? 'not-allowed' : 'pointer', boxSizing: 'border-box' }}>
         결과 보고서 발행하기
       </button>
 
-      {/* 방금 생성된 AI 리포트 출력 영역 */}
       {report && (
         <div style={{ marginTop: '24px', padding: '20px', borderRadius: '12px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
           <h3 style={{ marginTop: 0, paddingBottom: '12px', borderBottom: '2px solid #f1f5f9', fontSize: '16px', color: '#0f172a' }}>📋 실시간 점검 완료</h3>
           <div ref={reportRef} style={{ color: '#334155', lineHeight: '1.6', fontSize: '14px', wordBreak: 'keep-all' }}>
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>{report}</ReactMarkdown>
           </div>
-          <button onClick={exportToWord} style={{ marginTop: '16px', width: '100%', padding: '16px', background: '#10b981', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', fontSize: '16px' }}>
-            💾 워드(.doc) 다운로드
+          <button onClick={exportToWord} style={{ marginTop: '16px', width: '100%', padding: '16px', background: '#10b981', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', fontSize: '16px', cursor: 'pointer', boxSizing: 'border-box' }}>
+            💾 사진 포함 워드(.doc) 다운로드
           </button>
         </div>
       )}
 
-      {/* 과거 점검 기록 카드 영역 */}
       <div style={{ marginTop: '32px' }}>
         <button 
           onClick={() => setShowPast(!showPast)} 
-          style={{ width: '100%', padding: '16px', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px', fontWeight: 'bold', color: '#334155', fontSize: '15px', display: 'flex', justifyContent: 'space-between' }}
+          style={{ width: '100%', padding: '16px', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px', fontWeight: 'bold', color: '#334155', fontSize: '15px', display: 'flex', justifyContent: 'space-between', cursor: 'pointer', boxSizing: 'border-box' }}
         >
           <span>🗂 내 과거 점검 기록 보기 ({pastReports.length}건)</span>
           <span>{showPast ? '▲' : '▼'}</span>
@@ -285,5 +336,5 @@ function DashboardContent() {
 }
 
 export default function Dashboard() {
-  return <Suspense fallback={<div>로딩 중...</div>}><DashboardContent /></Suspense>;
+  return <Suspense fallback={<div style={{ textAlign: 'center', padding: '40px' }}>대시보드를 로딩 중입니다...</div>}><DashboardContent /></Suspense>;
 }
