@@ -47,7 +47,6 @@ function DashboardContent() {
     };
 
     const fetchWorkerData = async () => {
-      // 1. 기존 작업자 정보 조회
       let { data: workerData } = await supabase
         .from('workers')
         .select('*')
@@ -56,7 +55,6 @@ function DashboardContent() {
         .limit(1)
         .single();
 
-      // 2. DB에 없는 신규 작업자일 경우 자동으로 workers 테이블에 생성
       if (!workerData) {
         const { data: newWorker, error: insertError } = await supabase
           .from('workers')
@@ -143,10 +141,12 @@ function DashboardContent() {
 
       const fileExt = firstFile.name.split('.').pop();
       const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
-      const filePath = `public/${fileName}`;
+      
+      // ★ Supabase Storage 업로드 및 Public URL 정상 생성 로직
+      const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, firstFile);
+      if (uploadError) throw new Error(`이미지 업로드 실패: ${uploadError.message}`);
 
-      await supabase.storage.from('inspections').upload(filePath, firstFile);
-      const { data: publicUrlData } = supabase.storage.from('inspections').getPublicUrl(filePath);
+      const { data: publicUrlData } = supabase.storage.from('inspections').getPublicUrl(fileName);
       const imageUrl = publicUrlData?.publicUrl || '';
 
       const formData = new FormData();
