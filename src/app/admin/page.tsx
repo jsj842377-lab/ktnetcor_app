@@ -40,6 +40,7 @@ export default function AdminPage() {
         .lt('created_at', endDate.toISOString())
         .order('created_at', { ascending: true });
         
+      if (error) console.error('DB 불러오기 에러:', error); // 미사용 변수 에러 방지
       if (data) setInspections(data);
       setLoading(false);
     };
@@ -47,9 +48,7 @@ export default function AdminPage() {
     fetchData();
   }, [selectedMonth, isAuthenticated]);
 
-  // 마크다운 표에서 특정 항목의 내용을 파싱하는 유틸리티 함수
   const extractFromMarkdown = (text: string, key: string) => {
-    // 예: | **공사번호** | 안산-설비-2026-0096 |
     const regex = new RegExp(`\\|\\s*\\*\\*${key}\\*\\*\\s*\\|\\s*([^\\|]+)\\s*\\|`);
     const match = text.match(regex);
     return match ? match[1].trim() : '';
@@ -70,13 +69,11 @@ export default function AdminPage() {
       }
     };
 
-    // 추출된 고유 협력사 목록을 저장할 Set
     const companySet = new Set<string>();
     const dateMap = new Map();
     const monthMap = new Map();
     const detailRows: any[] = [];
 
-    // 1차 순회: 데이터 추출 및 가공
     inspections.forEach((item) => {
       const dateObj = new Date(item.created_at);
       const yyyyMmDd = dateObj.toISOString().slice(0, 10);
@@ -85,27 +82,21 @@ export default function AdminPage() {
       
       const aiText = item.ai_report_text || '';
       
-      // AI 보고서에서 데이터 추출
       const projectNumber = extractFromMarkdown(aiText, '공사번호') || '미분류-0000';
-      const companyName = projectNumber.split('-')[0] || '미상'; // 공사번호 맨 앞단어
+      const companyName = projectNumber.split('-')[0] || '미상'; 
       const workType = extractFromMarkdown(aiText, '작업공정') || '일반작업';
       const workerName = item.workers?.worker_name || '알수없음';
       
-      // 안전점검 이행 여부 (불량이 하나라도 있으면 X)
       const isDanger = aiText.includes('불량') ? 'X' : 'O';
 
       companySet.add(companyName);
 
-      // 안전점검 시트용 일자별 매핑
       if (!dateMap.has(yyyyMmDd)) dateMap.set(yyyyMmDd, {});
-      // 불량이 하나라도 있으면 세모(△) 또는 엑스(X), 모두 양호면 동그라미(O) 처리
       dateMap.get(yyyyMmDd)[companyName] = isDanger === 'X' ? '△' : 'O';
 
-      // 자재실사 시트용 월별 매핑
       if (!monthMap.has(yyyyMm)) monthMap.set(yyyyMm, {});
       monthMap.get(yyyyMm)[companyName] = 'O';
 
-      // 세부 이력 시트용 행 데이터 생성
       detailRows.push([
         { v: yyyyMmDd }, { v: amPm }, { v: workerName }, { v: companyName }, 
         { v: projectNumber }, { v: workType }, { v: isDanger, s: { alignment: { horizontal: "center" } } }
@@ -114,10 +105,8 @@ export default function AdminPage() {
 
     const companies = Array.from(companySet);
 
-    // ★ 결과물 1: 협력사 관리 (자재실사 및 안전점검 크로스탭)
     const crossTabHeaders = ['', ...companies].map(text => ({ v: text, s: headerStyle }));
     
-    // 자재실사 매트릭스 구성
     const crossTabSheetData = [
       [{ v: '자재 실사', s: { font: { bold: true } } }],
       crossTabHeaders
@@ -127,21 +116,18 @@ export default function AdminPage() {
       crossTabSheetData.push([{ v: month, s: { alignment: { horizontal: "center" } } }, ...rowData]);
     });
 
-    crossTabSheetData.push([]); // 빈 줄 삽입
+    crossTabSheetData.push([]); 
     crossTabSheetData.push([{ v: '안전점검', s: { font: { bold: true } } }]);
     crossTabSheetData.push(crossTabHeaders);
 
-    // 안전점검 매트릭스 구성
     Array.from(dateMap.keys()).forEach(date => {
       const rowData = companies.map(comp => ({ v: dateMap.get(date)[comp] || '-', s: { alignment: { horizontal: "center" } } }));
       crossTabSheetData.push([{ v: date, s: { alignment: { horizontal: "center" } } }, ...rowData]);
     });
 
-    // ★ 결과물 2: 세부 이력 (날짜/시간/인원/공사유형 등)
     const detailHeaders = ['점검일자', '시간', '인원', '협력사', '공사번호', '공사유형', '안전작업 이행 여부'].map(text => ({ v: text, s: headerStyle }));
     const detailSheetData = [detailHeaders, ...detailRows];
 
-    // 워크북 생성 및 시트 부착
     const wb = XLSX.utils.book_new();
     const ws1 = XLSX.utils.aoa_to_sheet(crossTabSheetData);
     const ws2 = XLSX.utils.aoa_to_sheet(detailSheetData);

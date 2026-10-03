@@ -12,7 +12,6 @@ export async function POST(req: NextRequest) {
 
     const formData = await req.formData();
     const files = formData.getAll('images') as File[];
-    const photoDate = formData.get('photoDate') as string || '알 수 없음';
     const reportDate = formData.get('reportDate') as string || '알 수 없음';
 
     if (!files || files.length === 0) {
@@ -35,7 +34,6 @@ export async function POST(req: NextRequest) {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
     
-    // ★ 수정: 공사번호(협력사 추출용) 자동 생성 지시 및 2차 작성을 위한 빈칸 강제
     const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진들을 꼼꼼히 분석하여, 반드시 아래의 [안전점검 결과보고서] 양식과 100% 동일한 마크다운(Markdown) 표 형태로 결과를 작성해주세요.
 
 [작성 지침]
