@@ -254,25 +254,46 @@ function DashboardContent() {
           </button>
           
           {showPast && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
-              {pastReports.map((item, idx) => (
-                <div key={idx} style={{ padding: '16px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
-                  {item.image_url && <img src={item.image_url} alt="과거현장" style={{ width: '100%', height: '160px', objectFit: 'cover', borderRadius: '8px', marginBottom: '12px' }} />}
-                  <div style={{ fontSize: '13px', color: '#475569', wordBreak: 'keep-all', maxHeight: '200px', overflowY: 'auto', paddingRight: '8px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '16px' }}>
+            {pastReports.length === 0 ? (
+              <div style={{ padding: '30px 20px', textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
+                아직 저장된 과거 점검 기록이 없습니다.<br/>새로운 현장 사진을 분석해보세요!
+              </div>
+            ) : (
+              pastReports.map((item, idx) => (
+                <div key={idx} style={{ padding: '20px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '16px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
+                  
+                  {/* 1. DB에 저장된 실제 점검(생성) 날짜 출력 */}
+                  <div style={{ fontSize: '13px', color: '#2563eb', marginBottom: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>📅</span>
+                    {new Date(item.created_at).toLocaleString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 점검 완료
+                  </div>
+                  
+                  {/* 2. 현장 사진 출력 영역 (사진이 찌그러지지 않도록 objectFit: cover 적용) */}
+                  {item.image_url ? (
+                    <img 
+                      src={item.image_url} 
+                      alt="과거 점검 현장 사진" 
+                      style={{ width: '100%', height: '220px', objectFit: 'cover', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '16px' }} 
+                    />
+                  ) : (
+                    <div style={{ width: '100%', height: '120px', background: '#f1f5f9', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', marginBottom: '16px', fontSize: '14px' }}>
+                      📷 첨부된 현장 사진이 없습니다
+                    </div>
+                  )}
+                  
+                  {/* 3. AI 분석 보고서 출력 영역 (너무 길면 카드 안에서 자체 스크롤되도록 제한) */}
+                  <div style={{ fontSize: '14px', color: '#334155', wordBreak: 'keep-all', maxHeight: '300px', overflowY: 'auto', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #f1f5f9' }}>
                     <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>
-                      {item.ai_report_text || '보고서 내용이 없습니다.'}
+                      {item.ai_report_text || 'AI 보고서 내용이 데이터베이스에 존재하지 않습니다.'}
                     </ReactMarkdown>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
-    </div>
-  );
-}
+                </div>
+              ))
+            )}
+          </div>
+        )}
 
 export default function Dashboard() {
   return <Suspense fallback={<div>로딩 중...</div>}><DashboardContent /></Suspense>;
