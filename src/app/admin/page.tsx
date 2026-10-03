@@ -7,7 +7,8 @@ import * as XLSX from 'xlsx-js-style';
 export default function AdminPage() {
   const [password, setPassword] = useState<string>('');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [inspections, setInspections] = useState<any[]>(any[]);
+  // ★ 수정: 잘못된 초기값 표기(any[])를 올바른 빈 배열([])로 수정
+  const [inspections, setInspections] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<string>('2026-10');
 
@@ -57,7 +58,6 @@ export default function AdminPage() {
   const exportToExcel = () => {
     if (inspections.length === 0) return alert('해당 월에 점검 기록이 없습니다.');
 
-    // ★ 타입 에러 방지를 위해 명시적이고 완전한 스타일 객체 정의
     const headerStyle = {
       fill: { fgColor: { rgb: "E2E8F0" } },
       font: { bold: true, color: { rgb: "0F172A" } },
@@ -102,7 +102,6 @@ export default function AdminPage() {
       if (!monthMap.has(yyyyMm)) monthMap.set(yyyyMm, {});
       monthMap.get(yyyyMm)[companyName] = 'O';
 
-      // ★ 타입 오류를 피하기 위해 셀 구조체 명시적 선언
       detailRows.push([
         { v: yyyyMmDd, s: centerStyle }, 
         { v: amPm, s: centerStyle }, 
@@ -179,7 +178,7 @@ export default function AdminPage() {
     <div style={{ padding: '40px', maxWidth: '800px', margin: '0 auto', fontFamily: 'sans-serif', backgroundColor: '#f8fafc', minHeight: '100vh' }}>
       <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '16px', boxShadow: '0 10px 25px rgba(0,0,0,0.05)' }}>
         <h1 style={{ fontSize: '28px', borderBottom: '2px solid #2563eb', paddingBottom: '12px', marginTop: 0 }}>
-          👨‍‍💼 현장 관리자 대시보드
+          👨‍💼 현장 관리자 대시보드
         </h1>
         
         <div style={{ marginTop: '24px', padding: '20px', backgroundColor: '#f1f5f9', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
