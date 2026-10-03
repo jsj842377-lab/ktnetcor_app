@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import confetti from 'canvas-confetti';
 import imageCompression from 'browser-image-compression';
+import localforage from 'localforage';
 
 function DashboardContent() {
   const searchParams = useSearchParams();
@@ -31,7 +32,20 @@ function DashboardContent() {
 
   const reportRef = useRef<HTMLDivElement>(null);
 
+  // 1. 컴포넌트 마운트 시 IndexedDB에 임시 저장된 사진과 작업자 정보 불러오기
   useEffect(() => {
+    const loadPendingPhotos = async () => {
+      try {
+        const savedFiles = await localforage.getItem<File[]>('pending_photos');
+        if (savedFiles && savedFiles.length > 0) {
+          setFiles(savedFiles);
+          setPreviewUrls(savedFiles.map(file => URL.createObjectURL(file)));
+        }
+      } catch (err) {
+        console.error('임시 저장된 사진을 불러오는 중 오류 발생:', err);
+      }
+    };
+
     const fetchWorkerData = async () => {
       const { data: workerData } = await supabase
         .from('workers')
@@ -55,37 +69,41 @@ function DashboardContent() {
         if (reportsData) setPastReports(reportsData);
       }
     };
+    
+    loadPendingPhotos();
     if (workerName) fetchWorkerData();
   }, [workerName]);
 
+  // 2. 사진 추가 시 압축 후 IndexedDB에 오프라인 임시 저장 (일괄 처리를 위함)
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const newFiles = Array.from(e.target.files);
       
-      // 이미지 압축 적용 (Vercel 용량 에러 방지)
       const compressedFiles = await Promise.all(
         newFiles.map(async (file) => {
           const options = { maxSizeMB: 1, maxWidthOrHeight: 1920, useWebWorker: true };
-          try {
-            return await imageCompression(file, options);
-          } catch (error) {
-            console.error('압축 에러:', error);
-            return file;
-          }
+          try { return await imageCompression(file, options); } 
+          catch (error) { return file; }
         })
       );
 
-      const newUrls = compressedFiles.map(file => URL.createObjectURL(file));
-      setFiles(prev => [...prev, ...compressedFiles]);
-      setPreviewUrls(prev => [...prev, ...newUrls]);
+      const currentSaved = await localforage.getItem<File[]>('pending_photos') || [];
+      const newTotalFiles = [...currentSaved, ...compressedFiles];
+      
+      await localforage.setItem('pending_photos', newTotalFiles);
+      setFiles(newTotalFiles);
+      setPreviewUrls(newTotalFiles.map(file => URL.createObjectURL(file)));
+      
       setReport(null);
       setIsEditing(false);
     }
   };
 
-  const removeFile = (indexToRemove: number) => {
-    setFiles(prev => prev.filter((_, idx) => idx !== indexToRemove));
-    setPreviewUrls(prev => prev.filter((_, idx) => idx !== indexToRemove));
+  const removeFile = async (indexToRemove: number) => {
+    const newFiles = files.filter((_, idx) => idx !== indexToRemove);
+    await localforage.setItem('pending_photos', newFiles);
+    setFiles(newFiles);
+    setPreviewUrls(newFiles.map(file => URL.createObjectURL(file)));
   };
 
   const handleUploadAndAnalyze = async () => {
@@ -121,6 +139,10 @@ function DashboardContent() {
       
       if (!response.ok) throw new Error(resData.error || 'AI 분석 요청에 실패했습니다.');
 
+      // ★ 성공적으로 분석이 완료되면 임시 저장소 비우기
+      await localforage.removeItem('pending_photos');
+      setFiles([]);
+      
       setReport(resData.report);
 
       if (workerId) {
@@ -162,12 +184,9 @@ function DashboardContent() {
       }
     } catch (error: any) {
       console.error(error);
-      const errMsg = error.message?.toLowerCase() || '';
-      if (errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('unavailable')) {
-        alert('현재 AI 서버 과부하로 지연 중입니다. 1~2분 뒤 다시 시도해주세요.');
-      } else {
-        alert('오류 발생: ' + error.message);
-      }
+      // 백엔드에서 세분화하여 던진 429 또는 503 에러 메시지를 그대로 출력
+      const errMsg = error.message || 'AI 분석 중 알 수 없는 오류가 발생했습니다.';
+      alert(`오류 발생: ${errMsg}`);
     } finally {
       setAnalyzing(false);
     }
@@ -194,7 +213,6 @@ function DashboardContent() {
     }, 100);
   };
 
-  // ★ 엑셀 양식과 100% 동일한 마크다운 커스텀 렌더링 스타일 적용
   const MarkdownComponents = {
     table: ({node, ...props}: any) => <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px', border: '1.5px solid #000' }} {...props} /></div>,
     th: ({node, ...props}: any) => <th style={{ border: '1px solid #000', background: '#f8fafc', padding: '10px', textAlign: 'center', fontWeight: 'bold', fontSize: '13px', wordBreak: 'keep-all', color: '#000' }} {...props} />,
@@ -216,7 +234,9 @@ function DashboardContent() {
           .print-target, .print-target * { visibility: visible; }
           .print-target { position: absolute; left: 0; top: 0; width: 100%; margin: 0; padding: 0; box-shadow: none; border: none; }
           .no-print { display: none !important; }
+          .print-only { display: block !important; }
         }
+        .print-only { display: none; }
       `}} />
 
       {showLevelUpModal && (
@@ -237,7 +257,6 @@ function DashboardContent() {
         </div>
       )}
 
-      {/* 대시보드 상단 프로필 및 사진 첨부 영역 */}
       <div className="no-print" style={{ padding: '16px', borderRadius: '12px', background: '#f1f5f9', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px', boxSizing: 'border-box' }}>
         <div style={{ fontSize: '36px', padding: '8px', background: 'white', borderRadius: '50%', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
           {level === 1 ? '🐣' : level < 3 ? '👷' : '🦸‍♂️'}
@@ -258,7 +277,7 @@ function DashboardContent() {
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px 20px', background: '#ffffff', borderRadius: '12px', cursor: 'pointer', border: '2px dashed #94a3b8', width: '100%', boxSizing: 'border-box' }}>
           <span style={{ fontSize: '32px', marginBottom: '12px' }}>📸</span>
           <span style={{ fontWeight: 'bold', color: '#334155', fontSize: '16px' }}>터치하여 현장 사진 추가하기</span>
-          <span style={{ fontSize: '13px', color: '#94a3b8', marginTop: '8px' }}>여러 장 선택 가능 (압축 자동 적용)</span>
+          <span style={{ fontSize: '13px', color: '#94a3b8', marginTop: '8px' }}>자동 오프라인 임시 저장 지원</span>
           <input type="file" accept="image/*" multiple onChange={handleFileChange} style={{ display: 'none' }} />
         </label>
         
@@ -275,10 +294,9 @@ function DashboardContent() {
       </div>
 
       <button className="no-print" onClick={handleUploadAndAnalyze} disabled={analyzing || files.length === 0} style={{ width: '100%', padding: '16px', fontSize: '16px', fontWeight: 'bold', color: '#ffffff', backgroundColor: analyzing ? '#94a3b8' : (files.length === 0 ? '#cbd5e1' : '#2563eb'), border: 'none', borderRadius: '12px', cursor: analyzing || files.length === 0 ? 'not-allowed' : 'pointer', boxSizing: 'border-box' }}>
-        결과 보고서 발행하기
+        선택된 사진 {files.length}장 일괄 분석하기
       </button>
 
-      {/* 실시간 보고서 영역 */}
       {report && (
         <div className={printItem ? "no-print" : "print-target"} style={{ marginTop: '24px', padding: '20px', borderRadius: '12px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
           <h3 className="no-print" style={{ marginTop: 0, paddingBottom: '12px', borderBottom: '2px solid #f1f5f9', fontSize: '16px', color: '#0f172a', textAlign: 'left' }}>📋 실시간 점검 완료</h3>
@@ -296,25 +314,23 @@ function DashboardContent() {
             </div>
           ) : (
             <>
-              {/* 마크다운 렌더링 영역 */}
+              <div className="print-only" style={{ textAlign: 'center', borderBottom: '2px solid #2563eb', paddingBottom: '10px', marginBottom: '20px' }}>
+                <h1 style={{ margin: 0, fontSize: '24px', color: '#0f172a' }}>현장 안전점검 보고서</h1>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <h3 style={{ fontSize: '16px', color: '#1e293b', marginBottom: '12px' }}>■ 현장 촬영 사진 ({previewUrls.length}장)</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center' }}>
+                  {previewUrls.map((url, idx) => (
+                    <img key={idx} src={url} alt={`현장사진 ${idx+1}`} style={{ width: '100%', maxWidth: '400px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                  ))}
+                </div>
+              </div>
+
               <div ref={reportRef} style={{ color: '#000', lineHeight: '1.6', fontSize: '14px', wordBreak: 'keep-all' }}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>{report}</ReactMarkdown>
               </div>
 
-              {/* ★ 현장사진 2단 그리드 렌더링 (엑셀 양식 완벽 동기화) */}
-              <div style={{ marginTop: '0px', border: '1.5px solid #000', borderTop: 'none' }}>
-                <div style={{ textAlign: 'center', padding: '10px', borderBottom: '1px solid #000', fontWeight: 'bold', fontSize: '14px', backgroundColor: '#f8fafc', color: '#000' }}>
-                  현장사진
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0px', backgroundColor: '#fff' }}>
-                  {previewUrls.map((url, idx) => (
-                    <div key={idx} style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px', borderRight: idx % 2 === 0 ? '1px solid #000' : 'none', borderBottom: idx < previewUrls.length - 2 ? '1px solid #000' : 'none' }}>
-                      <img src={url} alt={`현장사진 ${idx+1}`} style={{ width: '100%', maxHeight: '200px', objectFit: 'contain' }} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-              
               <div className="no-print" style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
                 <button onClick={() => setIsEditing(true)} style={{ flex: 1, padding: '14px', background: '#f8fafc', color: '#334155', border: '1px solid #cbd5e1', borderRadius: '12px', fontWeight: 'bold', fontSize: '15px', cursor: 'pointer', boxSizing: 'border-box' }}>
                   📝 텍스트 수정하기
@@ -328,7 +344,6 @@ function DashboardContent() {
         </div>
       )}
 
-      {/* 과거 점검 기록 아코디언 */}
       <div className="no-print" style={{ marginTop: '32px' }}>
         <button 
           onClick={() => setShowPast(!showPast)} 
@@ -340,51 +355,58 @@ function DashboardContent() {
         
         {showPast && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '16px' }}>
-            {pastReports.map((item, idx) => (
-              <div key={idx} style={{ padding: '20px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '16px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
-                <div style={{ fontSize: '13px', color: '#2563eb', marginBottom: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span>📅</span>
-                  {new Date(item.created_at).toLocaleString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 점검 완료
-                </div>
-                {item.image_url ? (
-                  <img src={item.image_url} alt="과거 점검 현장 사진" style={{ width: '100%', height: '220px', objectFit: 'cover', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '16px' }} />
-                ) : (
-                  <div style={{ width: '100%', height: '120px', background: '#f1f5f9', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', marginBottom: '16px', fontSize: '14px' }}>📷 첨부된 현장 사진이 없습니다</div>
-                )}
-                <div style={{ fontSize: '14px', color: '#334155', wordBreak: 'keep-all', maxHeight: '200px', overflowY: 'auto', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #f1f5f9', marginBottom: '16px' }}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>
-                    {item.ai_report_text || 'AI 보고서 내용이 데이터베이스에 존재하지 않습니다.'}
-                  </ReactMarkdown>
-                </div>
-                <button onClick={() => handlePrintPast(item)} style={{ width: '100%', padding: '14px', background: '#1e293b', color: 'white', border: 'none', borderRadius: '10px', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', boxSizing: 'border-box' }}>
-                  🖨️ 이 보고서만 PDF로 저장
-                </button>
+            {pastReports.length === 0 ? (
+              <div style={{ padding: '30px 20px', textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
+                아직 저장된 과거 점검 기록이 없습니다.<br/>새로운 현장 사진을 분석해보세요!
               </div>
-            ))}
+            ) : (
+              pastReports.map((item, idx) => (
+                <div key={idx} style={{ padding: '20px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '16px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
+                  <div style={{ fontSize: '13px', color: '#2563eb', marginBottom: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span>📅</span>
+                      {new Date(item.created_at).toLocaleString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 점검 완료
+                    </div>
+                  </div>
+                  {item.image_url ? (
+                    <img src={item.image_url} alt="과거 점검 현장 사진" style={{ width: '100%', height: '220px', objectFit: 'cover', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '16px' }} />
+                  ) : (
+                    <div style={{ width: '100%', height: '120px', background: '#f1f5f9', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', marginBottom: '16px', fontSize: '14px' }}>📷 첨부된 현장 사진이 없습니다</div>
+                  )}
+                  <div style={{ fontSize: '14px', color: '#334155', wordBreak: 'keep-all', maxHeight: '200px', overflowY: 'auto', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #f1f5f9', marginBottom: '16px' }}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>
+                      {item.ai_report_text || 'AI 보고서 내용이 데이터베이스에 존재하지 않습니다.'}
+                    </ReactMarkdown>
+                  </div>
+                  <button onClick={() => handlePrintPast(item)} style={{ width: '100%', padding: '14px', background: '#1e293b', color: 'white', border: 'none', borderRadius: '10px', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', boxSizing: 'border-box' }}>
+                    🖨️ 이 보고서만 PDF로 저장
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         )}
       </div>
 
-      {/* 과거 보고서 인쇄 전용 영역 */}
       {printItem && (
         <div className="print-target" style={{ padding: '20px', background: 'white' }}>
+          <div style={{ textAlign: 'center', borderBottom: '2px solid #2563eb', paddingBottom: '10px', marginBottom: '20px' }}>
+            <h1 style={{ margin: 0, fontSize: '24px', color: '#0f172a' }}>현장 안전점검 보고서 (과거 기록)</h1>
+          </div>
+          <div style={{ fontSize: '14px', color: '#2563eb', marginBottom: '16px', fontWeight: 'bold' }}>
+            점검 완료 일시: {new Date(printItem.created_at).toLocaleString('ko-KR')}
+          </div>
+          {printItem.image_url && (
+            <div style={{ marginBottom: '20px', textAlign: 'center' }}>
+              <h3 style={{ fontSize: '16px', color: '#1e293b', marginBottom: '12px', textAlign: 'left' }}>■ 현장 촬영 사진</h3>
+              <img src={printItem.image_url} alt="과거 현장사진" style={{ width: '100%', maxWidth: '400px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+            </div>
+          )}
           <div style={{ color: '#000', lineHeight: '1.6', fontSize: '14px', wordBreak: 'keep-all' }}>
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>
               {printItem.ai_report_text}
             </ReactMarkdown>
           </div>
-          {printItem.image_url && (
-            <div style={{ marginTop: '0px', border: '1.5px solid #000', borderTop: 'none' }}>
-              <div style={{ textAlign: 'center', padding: '10px', borderBottom: '1px solid #000', fontWeight: 'bold', fontSize: '14px', backgroundColor: '#f8fafc', color: '#000' }}>
-                현장사진
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0px', backgroundColor: '#fff' }}>
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '15px' }}>
-                  <img src={printItem.image_url} alt="과거 현장사진" style={{ width: '100%', maxHeight: '250px', objectFit: 'contain' }} />
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
 

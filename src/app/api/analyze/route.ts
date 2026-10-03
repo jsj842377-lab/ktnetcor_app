@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// ★ 추가: 503 에러 발생 시 시스템이 백그라운드에서 자동 재시도하는 딜레이 함수
+// 503 에러 발생 시 자동 재시도를 위한 지연 함수
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function POST(req: NextRequest) {
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
     
-    // ★ 퓨샷 프롬프팅: 사람과 AI의 역할을 분리하고 조치사항/비고를 철저히 빈칸으로 강제함
+    // 퓨샷 프롬프팅: 사람과 AI의 역할을 분리하고 조치사항/비고를 철저히 빈칸으로 강제
     const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진들을 꼼꼼히 분석하여, 반드시 아래의 [안전점검 결과보고서] 양식과 100% 동일한 마크다운(Markdown) 표 형태로 결과를 작성해주세요.
 
 [작성 지침]
@@ -64,26 +64,33 @@ export async function POST(req: NextRequest) {
 
 실제 첨부된 사진 상황에 맞추어 위 양식 그대로 결과를 생성하세요.`;
 
-    // ★ 추가: 지수 백오프(Exponential Backoff) 재시도 로직
-    // 구글 서버 트래픽 초과 시 사용자가 에러창을 보지 않도록 3초, 6초, 12초 대기 후 최대 3회 재요청
     let retries = 0;
     const maxRetries = 3;
     let result;
 
+    // 429 및 503 에러 핸들링 세분화 적용
     while (retries < maxRetries) {
       try {
         result = await model.generateContent([prompt, ...imageParts]);
         break; // 성공 시 반복문 탈출
       } catch (err: any) {
         retries++;
-        const isOverloaded = err.status === 503 || err.message?.includes('overloaded');
-        
+        const status = err.status || err.response?.status;
+        const errMsg = err.message?.toLowerCase() || '';
+
+        // 429 에러(일일 할당량 초과) 감지 시 즉각 중단 및 명확한 에러 반환
+        if (status === 429 || errMsg.includes('429') || errMsg.includes('quota')) {
+          throw new Error('일일 API 할당량이 모두 소진되었습니다. 내일 다시 시도하거나 유료 플랜으로 전환해주세요.');
+        }
+
+        // 503 에러(서버 과부하) 감지 시 지수 백오프 대기 후 재시도
+        const isOverloaded = status === 503 || errMsg.includes('overloaded') || errMsg.includes('unavailable');
         if (isOverloaded && retries < maxRetries) {
-          const waitTime = Math.pow(2, retries) * 1500; // 3000ms, 6000ms...
+          const waitTime = Math.pow(2, retries) * 1500; // 3초, 6초...
           console.warn(`[서버 과부하 감지] ${waitTime/1000}초 후 자동 재시도 (${retries}/${maxRetries})`);
           await delay(waitTime);
         } else {
-          throw err; // 다른 에러거나 최대 횟수 초과 시 에러 던짐
+          throw err; 
         }
       }
     }
