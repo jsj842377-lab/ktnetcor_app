@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// 503 에러 발생 시 자동 재시도를 위한 지연 함수
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function POST(req: NextRequest) {
@@ -36,20 +35,21 @@ export async function POST(req: NextRequest) {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
     
-    // 퓨샷 프롬프팅: 사람과 AI의 역할을 분리하고 조치사항/비고를 철저히 빈칸으로 강제
+    // ★ 수정: 공사번호(협력사 추출용) 자동 생성 지시 및 2차 작성을 위한 빈칸 강제
     const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진들을 꼼꼼히 분석하여, 반드시 아래의 [안전점검 결과보고서] 양식과 100% 동일한 마크다운(Markdown) 표 형태로 결과를 작성해주세요.
 
 [작성 지침]
-1. '조치사항'과 '비고' 칸은 2차로 사람이 직접 점검하며 작성할 예정이므로, AI는 절대로 내용을 채우지 말고 완벽히 빈칸( )으로 비워두세요.
-2. '결과(양호/불량)' 칸만 사진을 분석하여 AI가 1차 판단한 결과(양호 또는 불량)를 작성하세요.
-3. 지정된 5개의 점검항목을 임의로 삭제하거나 변경하지 마세요.
+1. **공사번호**: 반드시 "[지역명]-설비-2026-[랜덤4자리]" 형식으로 가상의 공사번호를 지어내어 작성하세요. (예: 안산-설비-2026-0096, 동양-초고속-2026-0295) 맨 앞단어(지역명)는 추후 협력사 이름으로 자동 추출됩니다.
+2. **조치사항 및 비고**: 2차로 사람이 직접 점검하며 작성할 예정이므로, AI는 절대로 내용을 채우지 말고 완벽히 빈칸( )으로 비워두세요.
+3. **점검자**: 빈칸으로 비워두세요.
+4. **결과(양호/불량)**: 지정된 5개의 점검항목에 대해 사진을 분석하여 AI가 1차 판단한 결과(양호 또는 불량)만 단답으로 작성하세요.
 
 ### 안전점검 결과보고서
 
 #### ■ 기본 정보
 | 항목 | 내용 | 항목 | 내용 |
 |---|---|---|---|
-| **공사번호** | | **점검일자** | ${reportDate} |
+| **공사번호** | (형식에 맞게 생성) | **점검일자** | ${reportDate} |
 | **작업공정** | (사진 기반 추정) | **점검자** | |
 | **작업내용** | (사진 기반 핵심 요약) | | |
 
@@ -68,25 +68,22 @@ export async function POST(req: NextRequest) {
     const maxRetries = 3;
     let result;
 
-    // 429 및 503 에러 핸들링 세분화 적용
     while (retries < maxRetries) {
       try {
         result = await model.generateContent([prompt, ...imageParts]);
-        break; // 성공 시 반복문 탈출
+        break; 
       } catch (err: any) {
         retries++;
         const status = err.status || err.response?.status;
         const errMsg = err.message?.toLowerCase() || '';
 
-        // 429 에러(일일 할당량 초과) 감지 시 즉각 중단 및 명확한 에러 반환
         if (status === 429 || errMsg.includes('429') || errMsg.includes('quota')) {
           throw new Error('일일 API 할당량이 모두 소진되었습니다. 내일 다시 시도하거나 유료 플랜으로 전환해주세요.');
         }
 
-        // 503 에러(서버 과부하) 감지 시 지수 백오프 대기 후 재시도
         const isOverloaded = status === 503 || errMsg.includes('overloaded') || errMsg.includes('unavailable');
         if (isOverloaded && retries < maxRetries) {
-          const waitTime = Math.pow(2, retries) * 1500; // 3초, 6초...
+          const waitTime = Math.pow(2, retries) * 1500;
           console.warn(`[서버 과부하 감지] ${waitTime/1000}초 후 자동 재시도 (${retries}/${maxRetries})`);
           await delay(waitTime);
         } else {
