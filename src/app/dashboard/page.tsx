@@ -18,7 +18,6 @@ function DashboardContent() {
   const [analyzing, setAnalyzing] = useState<boolean>(false);
   const [report, setReport] = useState<string | null>(null);
   
-  // ★ 기능 3: 과거 보고서를 담을 상태(State)와 토글 스위치 추가
   const [pastReports, setPastReports] = useState<any[]>([]);
   const [showPast, setShowPast] = useState<boolean>(false);
 
@@ -26,7 +25,6 @@ function DashboardContent() {
 
   useEffect(() => {
     const fetchWorkerData = async () => {
-      // 1. 현재 접속한 작업자의 정보를 가져옵니다.
       const { data: workerData } = await supabase
         .from('workers')
         .select('*')
@@ -40,7 +38,6 @@ function DashboardContent() {
         setLevel(workerData.level);
         setExp(workerData.exp);
 
-        // 2. 해당 작업자가 과거에 작성한 보고서 목록(inspections 테이블)을 시간 역순으로 모두 불러옵니다.
         const { data: reportsData } = await supabase
           .from('inspections')
           .select('*')
@@ -77,8 +74,6 @@ function DashboardContent() {
     try {
       const firstFile = files[0];
       
-      // ★ 기능 1: 사진 촬영 날짜 방어 로직
-      // 카카오톡 일반 화질 등으로 메타데이터가 날아갔을 경우, lastModified는 다운로드한 시간으로 왜곡됩니다.
       const rawPhotoDate = new Date(firstFile.lastModified);
       const formattedPhotoDate = `${rawPhotoDate.getFullYear()}년 ${rawPhotoDate.getMonth() + 1}월 ${rawPhotoDate.getDate()}일 ${rawPhotoDate.getHours()}시 ${rawPhotoDate.getMinutes()}분`;
 
@@ -106,11 +101,11 @@ function DashboardContent() {
       setReport(resData.report);
 
       if (workerId) {
-        // 새 보고서를 DB에 저장
-        const newReportObj = { worker_id: workerId, image_url: imageUrl, ai_report_text: resData.report, status: '완료' };
-        await supabase.from('inspections').insert([newReportObj]);
+        const newReportObj = { worker_id: workerId, image_url: imageUrl, ai_report_text: resData.report, status: '완료', created_at: new Date().toISOString() };
+        await supabase.from('inspections').insert([
+          { worker_id: workerId, image_url: imageUrl, ai_report_text: resData.report, status: '완료' }
+        ]);
         
-        // 화면의 과거 기록 목록 맨 위에도 즉시 방금 작성한 보고서를 추가 (새로고침 방지 UX)
         setPastReports(prev => [newReportObj, ...prev]);
         
         const gainedExp = files.length * 50;
@@ -143,7 +138,7 @@ function DashboardContent() {
     });
   };
 
-  const exportToWord = async () => { /* 기존 워드 다운로드 로직 동일 유지 */
+  const exportToWord = async () => {
     if (!report || !reportRef.current) return;
     const base64Images = await Promise.all(files.map(file => fileToBase64(file)));
     const imagesHtml = base64Images.map((base64, idx) => 
@@ -163,7 +158,6 @@ function DashboardContent() {
     document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
 
-  // 마크다운 렌더링 컴포넌트 재사용을 위한 공통 세팅
   const MarkdownComponents = {
     table: ({node, ...props}: any) => <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', margin: '16px 0', minWidth: '400px' }} {...props} /></div>,
     th: ({node, ...props}: any) => <th style={{ border: '1px solid #cbd5e1', background: '#f8fafc', padding: '10px', textAlign: 'left', fontWeight: 'bold' }} {...props} />,
@@ -175,12 +169,14 @@ function DashboardContent() {
   return (
     <div style={{ width: '100%', maxWidth: '640px', margin: '0 auto', padding: '16px', boxSizing: 'border-box', fontFamily: 'sans-serif', position: 'relative' }}>
       
-      {/* ★ 기능 2: 전체 화면을 덮는 반투명 로딩 오버레이 (GIF 애니메이션) */}
+      {/* 1. 회전 애니메이션 전역 선언 */}
+      <style dangerouslySetInnerHTML={{ __html: `@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}} />
+
+      {/* 2. 순수 CSS 로딩 스피너 및 오버레이 */}
       {analyzing && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-          {/* public 폴더에 넣은 loading.gif를 불러옵니다 */}
-          <img src="/loading.gif" alt="로딩중" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', backgroundColor: 'white', padding: '10px' }} />
-          <p style={{ color: 'white', fontSize: '18px', fontWeight: 'bold', marginTop: '24px', letterSpacing: '0.5px' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0,0,0,0.75)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: '60px', height: '60px', border: '5px solid rgba(255,255,255,0.2)', borderTop: '5px solid #3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '24px' }} />
+          <p style={{ color: 'white', fontSize: '18px', fontWeight: 'bold', letterSpacing: '0.5px' }}>
             Vision AI가 위험 요소를 분석 중입니다...
           </p>
           <p style={{ color: '#cbd5e1', fontSize: '14px', marginTop: '8px' }}>최대 10초 정도 소요될 수 있습니다</p>
@@ -242,18 +238,17 @@ function DashboardContent() {
         </div>
       )}
 
-      {/* ★ 기능 3: 과거 점검 기록 조회 영역 (아코디언 UI) */}
-      {pastReports.length > 0 && (
-        <div style={{ marginTop: '32px' }}>
-          <button 
-            onClick={() => setShowPast(!showPast)} 
-            style={{ width: '100%', padding: '16px', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px', fontWeight: 'bold', color: '#334155', fontSize: '15px', display: 'flex', justifyContent: 'space-between' }}
-          >
-            <span>🗂 내 과거 점검 기록 보기 ({pastReports.length}건)</span>
-            <span>{showPast ? '▲' : '▼'}</span>
-          </button>
-          
-          {showPast && (
+      {/* 과거 점검 기록 카드 영역 */}
+      <div style={{ marginTop: '32px' }}>
+        <button 
+          onClick={() => setShowPast(!showPast)} 
+          style={{ width: '100%', padding: '16px', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px', fontWeight: 'bold', color: '#334155', fontSize: '15px', display: 'flex', justifyContent: 'space-between' }}
+        >
+          <span>🗂 내 과거 점검 기록 보기 ({pastReports.length}건)</span>
+          <span>{showPast ? '▲' : '▼'}</span>
+        </button>
+        
+        {showPast && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '16px' }}>
             {pastReports.length === 0 ? (
               <div style={{ padding: '30px 20px', textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
@@ -262,38 +257,32 @@ function DashboardContent() {
             ) : (
               pastReports.map((item, idx) => (
                 <div key={idx} style={{ padding: '20px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '16px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
-                  
-                  {/* 1. DB에 저장된 실제 점검(생성) 날짜 출력 */}
                   <div style={{ fontSize: '13px', color: '#2563eb', marginBottom: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span>📅</span>
                     {new Date(item.created_at).toLocaleString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 점검 완료
                   </div>
-                  
-                  {/* 2. 현장 사진 출력 영역 (사진이 찌그러지지 않도록 objectFit: cover 적용) */}
                   {item.image_url ? (
-                    <img 
-                      src={item.image_url} 
-                      alt="과거 점검 현장 사진" 
-                      style={{ width: '100%', height: '220px', objectFit: 'cover', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '16px' }} 
-                    />
+                    <img src={item.image_url} alt="과거 점검 현장 사진" style={{ width: '100%', height: '220px', objectFit: 'cover', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '16px' }} />
                   ) : (
                     <div style={{ width: '100%', height: '120px', background: '#f1f5f9', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', marginBottom: '16px', fontSize: '14px' }}>
                       📷 첨부된 현장 사진이 없습니다
                     </div>
                   )}
-                  
-                  {/* 3. AI 분석 보고서 출력 영역 (너무 길면 카드 안에서 자체 스크롤되도록 제한) */}
                   <div style={{ fontSize: '14px', color: '#334155', wordBreak: 'keep-all', maxHeight: '300px', overflowY: 'auto', padding: '16px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #f1f5f9' }}>
                     <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>
                       {item.ai_report_text || 'AI 보고서 내용이 데이터베이스에 존재하지 않습니다.'}
                     </ReactMarkdown>
                   </div>
-
                 </div>
               ))
             )}
           </div>
         )}
+      </div>
+
+    </div>
+  );
+}
 
 export default function Dashboard() {
   return <Suspense fallback={<div>로딩 중...</div>}><DashboardContent /></Suspense>;
