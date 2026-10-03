@@ -22,7 +22,6 @@ export default function Home() {
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', padding: '20px', fontFamily: 'sans-serif' }}>
       <div style={{ width: '100%', maxWidth: '400px', backgroundColor: 'white', borderRadius: '16px', padding: '40px 24px', boxShadow: '0 10px 25px rgba(0, 0, 0, 0.05)', textAlign: 'center' }}>
         
-        {/* 제목 영역: 사진 원본 배색을 흰색 배경에 맞게 최적화 적용 */}
         <h1 style={{ fontSize: '36px', fontWeight: 'bold', wordBreak: 'keep-all', lineHeight: '1.4', marginBottom: '16px', letterSpacing: '-0.5px' }}>
           <span style={{ color: '#000000' }}>kt </span>
           <span style={{ color: '#E3000F' }}>netcore</span>
@@ -42,7 +41,7 @@ export default function Home() {
             type="text"
             value={workerName}
             onChange={(e) => setWorkerName(e.target.value)}
-            placeholder="예: 전소정"
+            placeholder="예: 홍길동"
             style={{ 
               width: '100%', 
               padding: '14px', 
