@@ -6,13 +6,13 @@ import Link from 'next/link';
 
 export default function Home() {
   const [workerName, setWorkerName] = useState('');
+  // ★ 추가: 로그인 상태 유지 체크박스를 관리하는 상태
+  const [keepLoggedIn, setKeepLoggedIn] = useState(false); 
   const router = useRouter();
 
-  // ★ 추가 1: 자동 로그인 (컴포넌트 마운트 시 localStorage 확인)
   useEffect(() => {
     const savedWorker = localStorage.getItem('ktnetcore_worker');
     if (savedWorker) {
-      // 저장된 이름이 있으면 즉시 대시보드로 리다이렉트
       router.push(`/dashboard?worker=${encodeURIComponent(savedWorker)}`);
     }
   }, [router]);
@@ -21,29 +21,32 @@ export default function Home() {
     e.preventDefault();
     if (!workerName.trim()) return alert('작업자 이름을 입력해주세요.');
     
-    // ★ 추가 2: 폼 제출 시 입력한 이름을 localStorage에 영구 저장
-    localStorage.setItem('ktnetcore_worker', workerName);
+    // ★ 수정: 체크박스가 선택되었을 때만 로컬 스토리지에 저장
+    if (keepLoggedIn) {
+      localStorage.setItem('ktnetcore_worker', workerName);
+    } else {
+      // 체크를 풀고 접속하는 경우 기존 저장 기록을 확실히 지워줌
+      localStorage.removeItem('ktnetcore_worker'); 
+    }
     
     router.push(`/dashboard?worker=${encodeURIComponent(workerName)}`);
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: '#f8fafc', position: 'relative' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: '#f8fafc', position: 'relative', overflow: 'hidden' }}>
       
-      {/* ★ 추가 3: 반응형 CSS 주입 (화면 너비 600px 이하의 모바일 기기에서 .admin-text 숨김) */}
       <style dangerouslySetInnerHTML={{ __html: `
         @media (max-width: 600px) {
           .admin-text { display: none; }
         }
       `}} />
 
-      {/* 우측 상단 관리자 페이지 바로가기 버튼 */}
       <Link 
         href="/admin" 
         style={{ 
           position: 'absolute', 
-          top: '24px', 
-          right: '24px', 
+          top: '20px', 
+          right: '20px', 
           padding: '10px 16px', 
           backgroundColor: '#e2e8f0', 
           color: '#334155', 
@@ -55,14 +58,15 @@ export default function Home() {
           transition: 'background-color 0.2s',
           display: 'flex',
           alignItems: 'center',
-          gap: '6px'
+          gap: '6px',
+          zIndex: 1000
         }}
       >
         <span>⚙️</span>
         <span className="admin-text">관리자</span>
       </Link>
 
-      <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '16px', boxShadow: '0 10px 25px rgba(0,0,0,0.05)', width: '100%', maxWidth: '400px', textAlign: 'center' }}>
+      <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '16px', boxShadow: '0 10px 25px rgba(0,0,0,0.05)', width: '100%', maxWidth: '400px', textAlign: 'center', zIndex: 1 }}>
         <h1 style={{ margin: '0 0 10px 0', fontSize: '32px', fontWeight: '900' }}>
           <span style={{ color: '#000' }}>kt </span><span style={{ color: '#ec1c24' }}>netcore</span>
         </h1>
@@ -76,10 +80,23 @@ export default function Home() {
           <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: '#334155', fontSize: '14px' }}>작업자 이름</label>
           <input 
             type="text" 
+            placeholder="예: 홍길동"
             value={workerName}
             onChange={(e) => setWorkerName(e.target.value)}
-            style={{ width: '100%', padding: '14px', borderRadius: '8px', border: '1px solid #cbd5e1', marginBottom: '20px', fontSize: '16px', boxSizing: 'border-box', outline: 'none' }}
+            style={{ width: '100%', padding: '14px', borderRadius: '8px', border: '1px solid #cbd5e1', marginBottom: '16px', fontSize: '16px', boxSizing: 'border-box', outline: 'none' }}
           />
+
+          {/* ★ 추가: 로그인 상태 유지 체크박스 UI */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px', cursor: 'pointer', fontSize: '14px', color: '#475569' }}>
+            <input 
+              type="checkbox" 
+              checked={keepLoggedIn}
+              onChange={(e) => setKeepLoggedIn(e.target.checked)}
+              style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#2563eb' }}
+            />
+            <span>자동 로그인 상태 유지</span>
+          </label>
+
           <button type="submit" style={{ width: '100%', padding: '14px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>
             시작하기
           </button>
