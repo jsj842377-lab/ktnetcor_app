@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -8,17 +8,36 @@ export default function Home() {
   const [workerName, setWorkerName] = useState('');
   const router = useRouter();
 
+  // ★ 추가 1: 자동 로그인 (컴포넌트 마운트 시 localStorage 확인)
+  useEffect(() => {
+    const savedWorker = localStorage.getItem('ktnetcore_worker');
+    if (savedWorker) {
+      // 저장된 이름이 있으면 즉시 대시보드로 리다이렉트
+      router.push(`/dashboard?worker=${encodeURIComponent(savedWorker)}`);
+    }
+  }, [router]);
+
   const handleStart = (e: React.FormEvent) => {
     e.preventDefault();
     if (!workerName.trim()) return alert('작업자 이름을 입력해주세요.');
-    // 입력한 작업자 이름을 URL 파라미터로 달아 대시보드로 이동
+    
+    // ★ 추가 2: 폼 제출 시 입력한 이름을 localStorage에 영구 저장
+    localStorage.setItem('ktnetcore_worker', workerName);
+    
     router.push(`/dashboard?worker=${encodeURIComponent(workerName)}`);
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: '#f8fafc', position: 'relative' }}>
       
-      {/* ★ 추가: 우측 상단 관리자 페이지 바로가기 버튼 */}
+      {/* ★ 추가 3: 반응형 CSS 주입 (화면 너비 600px 이하의 모바일 기기에서 .admin-text 숨김) */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        @media (max-width: 600px) {
+          .admin-text { display: none; }
+        }
+      `}} />
+
+      {/* 우측 상단 관리자 페이지 바로가기 버튼 */}
       <Link 
         href="/admin" 
         style={{ 
@@ -33,10 +52,14 @@ export default function Home() {
           fontWeight: 'bold', 
           fontSize: '14px', 
           boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
-          transition: 'background-color 0.2s' 
+          transition: 'background-color 0.2s',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px'
         }}
       >
-        ⚙️ 관리자
+        <span>⚙️</span>
+        <span className="admin-text">관리자</span>
       </Link>
 
       <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '16px', boxShadow: '0 10px 25px rgba(0,0,0,0.05)', width: '100%', maxWidth: '400px', textAlign: 'center' }}>
