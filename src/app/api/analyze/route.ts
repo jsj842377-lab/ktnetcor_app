@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
+// ★ 추가: 503 에러 발생 시 시스템이 백그라운드에서 자동 재시도하는 딜레이 함수
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function POST(req: NextRequest) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -10,8 +13,6 @@ export async function POST(req: NextRequest) {
 
     const formData = await req.formData();
     const files = formData.getAll('images') as File[];
-    
-    // ★ 추가: 두 가지 날짜 데이터를 모두 추출
     const photoDate = formData.get('photoDate') as string || '알 수 없음';
     const reportDate = formData.get('reportDate') as string || '알 수 없음';
 
@@ -33,23 +34,62 @@ export async function POST(req: NextRequest) {
     );
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
     
-    // ★ 수정: 점검 개요 최상단에 두 날짜가 무조건 고정으로 출력되도록 프롬프트 강화
-    const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진을 꼼꼼히 분석하여 다음 형식의 마크다운(Markdown)으로 보고서를 작성해주세요.
+    // ★ 퓨샷 프롬프팅: 사람과 AI의 역할을 분리하고 조치사항/비고를 철저히 빈칸으로 강제함
+    const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진들을 꼼꼼히 분석하여, 반드시 아래의 [안전점검 결과보고서] 양식과 100% 동일한 마크다운(Markdown) 표 형태로 결과를 작성해주세요.
 
-### 1. 점검 개요
-- **사진 촬영 일시**: ${photoDate}
-- **보고서 작성 일시**: ${reportDate}
-- **점검 대상 및 내용**: (분석한 사진의 핵심 대상과 내용을 1~2줄로 요약할 것)
+[작성 지침]
+1. '조치사항'과 '비고' 칸은 2차로 사람이 직접 점검하며 작성할 예정이므로, AI는 절대로 내용을 채우지 말고 완벽히 빈칸( )으로 비워두세요.
+2. '결과(양호/불량)' 칸만 사진을 분석하여 AI가 1차 판단한 결과(양호 또는 불량)를 작성하세요.
+3. 지정된 5개의 점검항목을 임의로 삭제하거나 변경하지 마세요.
 
-### 2. 세부 점검 결과
-반드시 표(Table) 형식을 사용하여 '구분', '상태', '위험 요소', '조치 권고사항'을 정리할 것.
+### 안전점검 결과보고서
 
-### 3. 종합 판정
-[정상], [주의], [위험] 중 하나를 명확히 기재하고 짧은 총평을 덧붙일 것.`;
+#### ■ 기본 정보
+| 항목 | 내용 | 항목 | 내용 |
+|---|---|---|---|
+| **공사번호** | | **점검일자** | ${reportDate} |
+| **작업공정** | (사진 기반 추정) | **점검자** | |
+| **작업내용** | (사진 기반 핵심 요약) | | |
 
-    const result = await model.generateContent([prompt, ...imageParts]);
+#### ■ 안전점검 항목
+| 점검항목 | 결과(양호/불량) | 조치사항 | 비고 |
+|---|---|---|---|
+| 보호구 착용 상태 | (AI 판정) | | |
+| 안전표지 설치 | (AI 판정) | | |
+| 사다리 및 장비 상태 | (AI 판정) | | |
+| 적정 공법 적용 상태 | (AI 판정) | | |
+| 정리정돈 상태 | (AI 판정) | | |
+
+실제 첨부된 사진 상황에 맞추어 위 양식 그대로 결과를 생성하세요.`;
+
+    // ★ 추가: 지수 백오프(Exponential Backoff) 재시도 로직
+    // 구글 서버 트래픽 초과 시 사용자가 에러창을 보지 않도록 3초, 6초, 12초 대기 후 최대 3회 재요청
+    let retries = 0;
+    const maxRetries = 3;
+    let result;
+
+    while (retries < maxRetries) {
+      try {
+        result = await model.generateContent([prompt, ...imageParts]);
+        break; // 성공 시 반복문 탈출
+      } catch (err: any) {
+        retries++;
+        const isOverloaded = err.status === 503 || err.message?.includes('overloaded');
+        
+        if (isOverloaded && retries < maxRetries) {
+          const waitTime = Math.pow(2, retries) * 1500; // 3000ms, 6000ms...
+          console.warn(`[서버 과부하 감지] ${waitTime/1000}초 후 자동 재시도 (${retries}/${maxRetries})`);
+          await delay(waitTime);
+        } else {
+          throw err; // 다른 에러거나 최대 횟수 초과 시 에러 던짐
+        }
+      }
+    }
+
+    if (!result) throw new Error('AI 분석에 실패했습니다.');
+
     const response = await result.response;
     const text = response.text();
 
