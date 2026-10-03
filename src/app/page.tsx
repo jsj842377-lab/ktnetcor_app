@@ -2,94 +2,84 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/utils/supabase';
 
 export default function Home() {
   const [workerName, setWorkerName] = useState('');
-  const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  // 작업자 등록 및 로그인 처리 함수
-  const handleLogin = async () => {
-    // 1. 이름 입력 예외 처리 (공백 방지)
+  const handleStart = (e: React.FormEvent) => {
+    e.preventDefault(); // 엔터 키 입력 시 새로고침 방지
+    
     if (!workerName.trim()) {
-      alert('이름을 입력해주세요.');
+      alert('작업자 이름을 입력해주세요.');
       return;
     }
     
-    setLoading(true);
-    
-    // 2. Supabase 데이터베이스 연동 (workers 테이블에 데이터 삽입)
-    const { data, error } = await supabase
-      .from('workers')
-      .insert([{ worker_name: workerName }])
-      .select();
-
-    setLoading(false);
-
-    // 3. 결과 처리 및 페이지 이동
-    if (error) {
-      console.error("DB Error:", error);
-      alert('데이터베이스 연결 오류: ' + error.message);
-    } else {
-      alert(`환영합니다, ${workerName}님! 캐릭터 육성을 시작합니다.`);
-      // URL 파라미터로 이름을 안전하게 전달 (한글 깨짐 방지)
-      router.push(`/dashboard?worker=${encodeURIComponent(workerName)}`); 
-    }
+    // 입력받은 이름을 파라미터로 달아 대시보드로 이동
+    router.push(`/dashboard?worker=${encodeURIComponent(workerName)}`);
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-gray-50 p-6">
-      <div className="z-10 max-w-md w-full flex flex-col items-center gap-6 bg-white p-10 rounded-3xl shadow-xl border border-gray-100">
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', padding: '20px', fontFamily: 'sans-serif' }}>
+      <div style={{ width: '100%', maxWidth: '400px', backgroundColor: 'white', borderRadius: '16px', padding: '40px 24px', boxShadow: '0 10px 25px rgba(0, 0, 0, 0.05)', textAlign: 'center' }}>
         
-        {/* 타이틀 및 기획 의도 설명 영역 */}
-        <div className="text-center">
-          <h1 className="text-4xl font-extrabold text-blue-600 mb-4 tracking-tight">
-            ktnetcore 현장 관리
-          </h1>
-          <p className="text-gray-500 leading-relaxed text-sm break-keep">
-            안전점검 및 자재실사 사진을 올리고<br/>
-            보고서를 자동 완성하여 캐릭터를 성장시키세요!
-          </p>
-        </div>
+        {/* 제목 영역: 단어 단위 줄바꿈 유지 및 KT 로고 색상(Red/Dark) 분리 적용 */}
+        <h1 style={{ fontSize: '32px', fontWeight: 'bold', wordBreak: 'keep-all', lineHeight: '1.4', marginBottom: '16px' }}>
+          <span style={{ color: '#ec1c24' }}>kt</span>
+          <span style={{ color: '#1e293b' }}>netcore</span>
+          <br />
+          <span style={{ color: '#2563eb' }}>현장 관리</span>
+        </h1>
         
-        {/* 작업자 이름 입력 영역 */}
-        <div className="flex flex-col w-full gap-4 mt-2">
-          <div className="flex flex-col gap-2">
-            <label htmlFor="workerName" className="font-semibold text-gray-700 text-sm">
-              작업자 이름
-            </label>
-            <input 
-              id="workerName"
-              type="text" 
-              value={workerName}
-              onChange={(e) => setWorkerName(e.target.value)}
-              // 엔터 키(Enter)를 누르면 바로 handleLogin 함수가 실행되도록 연결
-              onKeyDown={(e) => { if (e.key === 'Enter') handleLogin(); }}
-              className="border border-gray-300 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-black transition-all"
-              placeholder="예: 전소정"
-              disabled={loading}
-            />
-          </div>
-          
-          <button 
-            onClick={handleLogin}
-            disabled={loading}
-            className={`w-full py-3 mt-2 rounded-xl font-bold text-white transition-all duration-200 ${
-              loading 
-                ? 'bg-blue-300 cursor-not-allowed' 
-                : 'bg-blue-600 hover:bg-blue-700 hover:shadow-lg'
-            }`}
-          >
-            {loading ? '데이터베이스 저장 중...' : '시작하기'}
-          </button>
-        </div>
+        <p style={{ color: '#64748b', fontSize: '15px', lineHeight: '1.6', marginBottom: '40px', wordBreak: 'keep-all' }}>
+          안전점검 및 자재실사 사진을 올리고<br />보고서를 자동 완성하여 캐릭터를 성장시키세요!
+        </p>
 
-        {/* 하단 푸터 */}
-        <div className="mt-4 text-xs text-gray-400 text-center">
+        {/* 폼 영역: 모바일 환경을 고려한 터치 영역(padding) 확보 */}
+        <form onSubmit={handleStart} style={{ textAlign: 'left' }}>
+          <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#334155', marginBottom: '8px' }}>
+            작업자 이름
+          </label>
+          <input
+            type="text"
+            value={workerName}
+            onChange={(e) => setWorkerName(e.target.value)}
+            placeholder="예: 전소정"
+            style={{ 
+              width: '100%', 
+              padding: '14px', 
+              fontSize: '16px', 
+              border: '1px solid #cbd5e1', 
+              borderRadius: '8px', 
+              marginBottom: '24px', 
+              outline: 'none', 
+              boxSizing: 'border-box' 
+            }}
+          />
+          
+          <button
+            type="submit"
+            style={{ 
+              width: '100%', 
+              padding: '16px', 
+              fontSize: '16px', 
+              fontWeight: 'bold', 
+              color: 'white', 
+              backgroundColor: '#2563eb', 
+              border: 'none', 
+              borderRadius: '8px', 
+              cursor: 'pointer', 
+              transition: 'background-color 0.2s' 
+            }}
+          >
+            시작하기
+          </button>
+        </form>
+
+        <div style={{ marginTop: '32px', fontSize: '12px', color: '#94a3b8' }}>
           © 2026 ktnetcore Gamification Project
         </div>
       </div>
-    </main>
+    </div>
   );
 }
