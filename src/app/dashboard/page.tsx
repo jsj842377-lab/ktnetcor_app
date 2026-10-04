@@ -193,7 +193,6 @@ function DashboardContent() {
 
   return (
     <div style={{ maxWidth: '640px', margin: '0 auto', padding: '16px', fontFamily: "'Pretendard', sans-serif" }}>
-      {/* ★ PDF 인쇄용 CSS 강화 (사진 잘림 방지, 100% 렌더링) */}
       <style dangerouslySetInnerHTML={{ __html: `
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -207,7 +206,6 @@ function DashboardContent() {
         }
       `}} />
 
-      {/* 설정 모달 (비밀번호 변경) */}
       {showSettingsModal && (
         <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <form onSubmit={handleChangePassword} style={{ background: 'white', padding: '30px', borderRadius: '16px', width: '90%', maxWidth: '320px', boxSizing: 'border-box' }}>
@@ -283,10 +281,48 @@ function DashboardContent() {
       {report && (
         <div className={printItem ? "no-print" : "print-target"} style={{ marginTop: '20px', padding: '20px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
           {isEditing ? (
-            <div className="no-print"><textarea value={report} onChange={e => setReport(e.target.value)} style={{ width: '100%', minHeight: '300px', padding: '10px', boxSizing: 'border-box' }} /><button onClick={handleUpdateReport} style={{ width: '100%', padding: '12px', background: '#3b82f6', color: 'white', marginTop: '10px', border: 'none' }}>저장</button></div>
+            <div className="no-print" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* ★ 개선된 다크모드 + 고정폭 폰트 에디터 */}
+              <div style={{ background: '#1e293b', padding: '16px', borderRadius: '12px', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <h4 style={{ color: '#60a5fa', margin: 0, fontSize: '14px' }}>💻 보고서 직접 수정 (조치사항 입력)</h4>
+                </div>
+                <textarea 
+                  value={report} 
+                  onChange={e => setReport(e.target.value)} 
+                  style={{ 
+                    width: '100%', 
+                    minHeight: '300px', 
+                    padding: '12px', 
+                    boxSizing: 'border-box',
+                    fontFamily: "'Consolas', 'Courier New', monospace", /* 표 정렬을 위한 핵심 설정 */
+                    fontSize: '14px',
+                    lineHeight: '1.6',
+                    background: 'transparent',
+                    color: '#f8fafc',
+                    border: '1px solid #334155',
+                    borderRadius: '8px',
+                    outline: 'none',
+                    resize: 'vertical'
+                  }} 
+                />
+              </div>
+
+              {/* ★ 실시간 미리보기 뷰어 */}
+              <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                <h4 style={{ margin: '0 0 12px 0', color: '#475569', fontSize: '14px', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>👀 실시간 미리보기</h4>
+                <div style={{ pointerEvents: 'none' }}>
+                  <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={() => setIsEditing(false)} style={{ flex: 1, padding: '14px', background: '#e2e8f0', color: '#1e293b', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>취소</button>
+                <button onClick={handleUpdateReport} style={{ flex: 2, padding: '14px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>수정 내용 저장</button>
+              </div>
+            </div>
           ) : (
             <>
-              {/* ★ 새 보고서 인쇄 시 사진을 PDF 영역(.print-target) 내부에 강제 포함 */}
               <div ref={reportRef}>
                 <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
                 {previewUrls.length > 0 && (
@@ -298,14 +334,14 @@ function DashboardContent() {
                   </div>
                 )}
               </div>
-              <div className="no-print" style={{ display: 'flex', gap: '10px', marginTop: '20px' }}><button onClick={() => setIsEditing(true)} style={{ flex: 1, padding: '12px' }}>수정</button><button onClick={() => window.print()} style={{ flex: 1, padding: '12px', background: '#10b981', color: 'white', border: 'none' }}>PDF 인쇄</button></div>
+              <div className="no-print" style={{ display: 'flex', gap: '10px', marginTop: '20px' }}><button onClick={() => setIsEditing(true)} style={{ flex: 1, padding: '12px', cursor: 'pointer', borderRadius: '8px', border: '1px solid #cbd5e1' }}>수정</button><button onClick={() => window.print()} style={{ flex: 1, padding: '12px', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>PDF 인쇄</button></div>
             </>
           )}
         </div>
       )}
 
       <div className="no-print" style={{ marginTop: '30px' }}>
-        <button onClick={() => setShowPast(!showPast)} style={{ width: '100%', padding: '16px', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px' }}>과거 기록 보기 ({pastReports.length}건)</button>
+        <button onClick={() => setShowPast(!showPast)} style={{ width: '100%', padding: '16px', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px', cursor: 'pointer' }}>과거 기록 보기 ({pastReports.length}건)</button>
         {showPast && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
             {pastReports.map((item, i) => (
@@ -314,8 +350,7 @@ function DashboardContent() {
                 {item.image_url && <img src={item.image_url} alt="사진" style={{ width: '100%', height: '150px', objectFit: 'cover', borderRadius: '8px', marginBottom: '10px' }} />}
                 <div style={{ maxHeight: '150px', overflowY: 'auto', background: '#f8fafc', padding: '10px', borderRadius: '8px' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown></div>
                 
-                {/* ★ 과거 보고서 인쇄 시 브라우저가 사진을 렌더링할 시간을 충분히 벌어주기 위해 딜레이를 100ms -> 600ms로 증가 */}
-                <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 600); }} style={{ width: '100%', marginTop: '10px', padding: '10px', background: '#1e293b', color: 'white', border: 'none', borderRadius: '8px' }}>인쇄</button>
+                <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 600); }} style={{ width: '100%', marginTop: '10px', padding: '10px', background: '#1e293b', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>인쇄</button>
               </div>
             ))}
           </div>
