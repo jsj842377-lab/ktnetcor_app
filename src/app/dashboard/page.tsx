@@ -37,9 +37,16 @@ function DashboardContent() {
   const [report, setReport] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [currentReportId, setCurrentReportId] = useState<string | null>(null);
-  
-  // ★ 자동 저장 시간을 화면에 보여주기 위한 상태
   const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
+  
+  const [editForm, setEditForm] = useState([
+    { name: '보호구 착용 상태', result: '', action: '', note: '' },
+    { name: '안전표지 설치', result: '', action: '', note: '' },
+    { name: '사다리 및 장비 상태', result: '', action: '', note: '' },
+    { name: '적정 공법 적용 상태', result: '', action: '', note: '' },
+    { name: '정리정돈 상태', result: '', action: '', note: '' },
+  ]);
+  const editFormRef = useRef(editForm);
   
   const [pastReports, setPastReports] = useState<any[]>([]);
   const [showPast, setShowPast] = useState<boolean>(false);
@@ -75,28 +82,26 @@ function DashboardContent() {
     return () => { if (interval) clearInterval(interval); };
   }, [analyzing, dbTips]);
 
-  // ★ 에디터 5초 주기 자동 저장 로직 (localStorage 활용)
+  useEffect(() => { editFormRef.current = editForm; }, [editForm]);
+
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isEditing && report && currentReportId) {
+    if (isEditing && currentReportId && report) {
       interval = setInterval(() => {
-        localStorage.setItem(`kt_autosave_${currentReportId}`, report);
+        const currentDraft = buildMarkdownFromForm(report, editFormRef.current);
+        localStorage.setItem(`kt_autosave_${currentReportId}`, currentDraft);
         const now = new Date();
         const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
         setLastSavedTime(`${timeStr} 자동 저장됨`);
       }, 5000);
     }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isEditing, report, currentReportId]);
+    return () => { if (interval) clearInterval(interval); };
+  }, [isEditing, currentReportId, report]);
 
   useEffect(() => {
     const loadPendingPhotos = async () => {
       const savedFiles = await localforage.getItem<File[]>('pending_photos');
-      if (savedFiles && savedFiles.length > 0) {
-        setFiles(savedFiles); setPreviewUrls(savedFiles.map(file => URL.createObjectURL(file)));
-      }
+      if (savedFiles && savedFiles.length > 0) { setFiles(savedFiles); setPreviewUrls(savedFiles.map(file => URL.createObjectURL(file))); }
     };
     const fetchWorkerData = async () => {
       let { data: workerData } = await supabase.from('workers').select('*').eq('worker_name', workerName).order('created_at', { ascending: false }).limit(1).single();
@@ -106,7 +111,23 @@ function DashboardContent() {
         if (reportsData && reportsData.length > 0) {
           const lastReportDate = new Date(reportsData[0].created_at);
           if (lastReportDate > lastActiveDate) lastActiveDate = lastReportDate;
+          
+          for (const r of reportsData) {
+            const draft = localStorage.getItem(`kt_autosave_${r.id}`);
+            if (draft && draft !== r.ai_report_text) {
+              if (window.confirm('비정상 종료로 인해 저장되지 않은 이전 보고서가 발견되었습니다.\n지금 이어서 작성하시겠습니까?')) {
+                setReport(draft);
+                setCurrentReportId(r.id);
+                parseMarkdownToForm(draft);
+                setIsEditing(true);
+                break; 
+              } else {
+                localStorage.removeItem(`kt_autosave_${r.id}`);
+              }
+            }
+          }
         }
+        
         const lastActiveYear = lastActiveDate.getFullYear(); const lastActiveQuarter = Math.floor(lastActiveDate.getMonth() / 3) + 1;
         if (currentYear > lastActiveYear || (currentYear === lastActiveYear && currentQuarter > lastActiveQuarter)) {
           if (workerData.exp > 0 || workerData.level > 1) {
@@ -123,49 +144,94 @@ function DashboardContent() {
     if (workerName && ALLOWED_WORKERS.includes(workerName)) fetchWorkerData();
   }, [workerName, currentYear, currentQuarter]);
 
-  const toggleGender = () => {
-    const newGender = gender === 'M' ? 'F' : 'M';
-    setGender(newGender); localStorage.setItem(`kt_gender_${workerName}`, newGender);
-  };
-  
-  const getCharacterEmoji = () => {
-    if (level === 1) return '🐣'; if (level < 3) return gender === 'M' ? '👦' : '👧';
-    return gender === 'M' ? '👨‍🔧' : '👩‍🔧';
+  const parseMarkdownToForm = (mdText: string) => {
+    const newForm = [...editForm];
+    newForm.forEach((item, i) => {
+      const regex = new RegExp(`\\|\\s*${item.name}\\s*\\|([^\\|]+)\\|([^\\|]+)\\|([^\\|]+)\\|`);
+      const match = mdText.match(regex);
+      if (match) {
+        newForm[i].result = match[1].trim().replace(/\(\s*\)/g, '');
+        newForm[i].action = match[2].trim().replace(/\(\s*\)/g, '');
+        newForm[i].note = match[3].trim().replace(/\(\s*\)/g, '');
+      }
+    });
+    setEditForm(newForm);
   };
 
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!oldPwd || !newPwd) return alert('모두 입력해주세요.');
-    const { data } = await supabase.from('workers').select('password').eq('id', workerId).single();
-    if (data?.password !== oldPwd) return alert('현재 비밀번호가 일치하지 않습니다.');
+  const buildMarkdownFromForm = (originalMd: string, currentForm: any[]) => {
+    const parts = originalMd.split('#### ■ 안전점검 항목');
+    if (parts.length < 2) return originalMd;
     
-    await supabase.from('workers').update({ password: newPwd }).eq('id', workerId);
-    alert('비밀번호가 성공적으로 변경되었습니다.');
-    setShowSettingsModal(false); setOldPwd(''); setNewPwd('');
+    const topPart = parts[0];
+    const bottomPart = `#### ■ 안전점검 항목\n| 점검항목 | 결과(양호/불량) | 조치사항 | 비고 |\n|---|---|---|---|\n` + 
+      currentForm.map(item => `| ${item.name} | ${item.result || '( )'} | ${item.action || '( )'} | ${item.note || '( )'} |`).join('\n');
+    
+    return topPart + bottomPart;
   };
 
-  const handleLogout = () => {
-    if(window.confirm('정말 로그아웃 하시겠습니까?')) router.push('/');
+  const handleFormChange = (index: number, field: string, value: string) => {
+    const newForm = [...editForm];
+    (newForm[index] as any)[field] = value;
+    setEditForm(newForm);
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const newFiles = Array.from(e.target.files);
-      const compressedFiles = await Promise.all(newFiles.map(async (file) => {
-        try { return await imageCompression(file, { maxSizeMB: 0.3, maxWidthOrHeight: 1024, initialQuality: 0.7, useWebWorker: true }); } catch { return file; }
-      }));
-      const currentSaved = await localforage.getItem<File[]>('pending_photos') || [];
-      const newTotalFiles = [...currentSaved, ...compressedFiles];
-      await localforage.setItem('pending_photos', newTotalFiles);
-      setFiles(newTotalFiles); setPreviewUrls(newTotalFiles.map(f => URL.createObjectURL(f))); setReport(null); setIsEditing(false);
+  const handleStartEdit = () => {
+    if (report) parseMarkdownToForm(report);
+    setIsEditing(true); setLastSavedTime(null);
+  };
+
+  // ★ 저장 버튼 클릭 시 처리 함수
+  const handleUpdateReport = async () => {
+    setIsEditing(false); 
+    if (currentReportId && report) {
+      const finalMarkdown = buildMarkdownFromForm(report, editForm);
+      await supabase.from('inspections').update({ ai_report_text: finalMarkdown }).eq('id', currentReportId);
+      setPastReports(prev => prev.map(item => item.id === currentReportId ? { ...item, ai_report_text: finalMarkdown } : item));
+      setReport(finalMarkdown);
+      localStorage.removeItem(`kt_autosave_${currentReportId}`);
+      setLastSavedTime(null);
+      
+      // ★ 추가: 수정 완료 시 폭죽 터뜨리기
+      confetti({ 
+        particleCount: 150, 
+        spread: 80, 
+        origin: { y: 0.6 },
+        colors: ['#26ccff', '#a25afd', '#ff5e7e', '#88ff5a', '#fcff42', '#ffa62d', '#ff36ff'] 
+      });
     }
   };
 
-  const removeFile = async (idxToRemove: number) => {
-    const newFiles = files.filter((_, idx) => idx !== idxToRemove);
-    await localforage.setItem('pending_photos', newFiles); setFiles(newFiles); setPreviewUrls(newFiles.map(f => URL.createObjectURL(f)));
+  const handleCancelEdit = () => {
+    if (window.confirm('수정을 취소하시겠습니까? 저장되지 않은 내용은 사라집니다.')) {
+      setIsEditing(false); setLastSavedTime(null);
+      if (currentReportId) {
+        localStorage.removeItem(`kt_autosave_${currentReportId}`);
+        const originalItem = pastReports.find(item => item.id === currentReportId);
+        if (originalItem) setReport(originalItem.ai_report_text);
+      }
+    }
   };
 
+  const toggleGender = () => { const newGender = gender === 'M' ? 'F' : 'M'; setGender(newGender); localStorage.setItem(`kt_gender_${workerName}`, newGender); };
+  const getCharacterEmoji = () => { if (level === 1) return '🐣'; if (level < 3) return gender === 'M' ? '👦' : '👧'; return gender === 'M' ? '👨‍🔧' : '👩‍🔧'; };
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault(); if (!oldPwd || !newPwd) return alert('모두 입력해주세요.');
+    const { data } = await supabase.from('workers').select('password').eq('id', workerId).single();
+    if (data?.password !== oldPwd) return alert('현재 비밀번호가 일치하지 않습니다.');
+    await supabase.from('workers').update({ password: newPwd }).eq('id', workerId);
+    alert('비밀번호가 성공적으로 변경되었습니다.'); setShowSettingsModal(false); setOldPwd(''); setNewPwd('');
+  };
+  const handleLogout = () => { if(window.confirm('정말 로그아웃 하시겠습니까?')) router.push('/'); };
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const newFiles = Array.from(e.target.files);
+      const compressedFiles = await Promise.all(newFiles.map(async (f) => { try { return await imageCompression(f, { maxSizeMB: 0.3, maxWidthOrHeight: 1024, initialQuality: 0.7, useWebWorker: true }); } catch { return f; } }));
+      const currentSaved = await localforage.getItem<File[]>('pending_photos') || []; const newTotalFiles = [...currentSaved, ...compressedFiles];
+      await localforage.setItem('pending_photos', newTotalFiles); setFiles(newTotalFiles); setPreviewUrls(newTotalFiles.map(f => URL.createObjectURL(f))); setReport(null); setIsEditing(false);
+    }
+  };
+  const removeFile = async (idx: number) => { const newFiles = files.filter((_, i) => i !== idx); await localforage.setItem('pending_photos', newFiles); setFiles(newFiles); setPreviewUrls(newFiles.map(f => URL.createObjectURL(f))); };
+  
   const handleUploadAndAnalyze = async () => {
     if (files.length === 0) return alert('사진을 추가해주세요!');
     setAnalyzing(true); setReport(null); setIsEditing(false);
@@ -174,62 +240,21 @@ function DashboardContent() {
       const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${firstFile.name.split('.').pop()}`;
       const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, firstFile);
       const { data: publicUrlData } = supabase.storage.from('inspections').getPublicUrl(fileName); const imageUrl = publicUrlData?.publicUrl || '';
-      
       const formData = new FormData(); files.forEach(f => formData.append('images', f)); formData.append('photoDate', photoDateStr); formData.append('projectNumber', projectNumberInput); formData.append('workType', workTypeInput); formData.append('workDesc', workDescInput); formData.append('inspector', workerName); 
       const res = await fetch('/api/analyze', { method: 'POST', body: formData }); const resData = await res.json();
       if (!res.ok) throw new Error(resData.error || '분석 실패');
-
       await localforage.removeItem('pending_photos'); setFiles([]); setReport(resData.report);
       if (workerId) {
         const { data: insertedData } = await supabase.from('inspections').insert([{ worker_id: workerId, image_url: imageUrl, ai_report_text: resData.report, status: '완료' }]).select().single();
         if (insertedData) { setCurrentReportId(insertedData.id); setPastReports(prev => [insertedData, ...prev]); }
         const hasDanger = resData.report.includes('불량'); if (hasDanger) alert('⚠️ 위험 요소 발견! 보너스 10 EXP 추가 지급');
-        const gainedExp = (files.length * 5) + (hasDanger ? 10 : 0); 
-        let tempExp = exp + gainedExp; let calcLevel = 1; let reqExp = 100;
+        const gainedExp = (files.length * 5) + (hasDanger ? 10 : 0); let tempExp = exp + gainedExp; let calcLevel = 1; let reqExp = 100;
         while (tempExp >= reqExp) { tempExp -= reqExp; calcLevel++; reqExp *= 2; }
         if (calcLevel > level) { setShowLevelUpModal(true); confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } }); setTimeout(() => setShowLevelUpModal(false), 5000); }
         setExp(exp + gainedExp); setLevel(calcLevel);
         await supabase.from('workers').update({ exp: exp + gainedExp, level: calcLevel }).eq('id', workerId);
       }
     } catch (err: any) { alert(`오류: ${err.message}`); } finally { setAnalyzing(false); }
-  };
-
-  // ★ 수정 시작 시 자동 저장된 찌꺼기가 있는지 검사하고 복구 알림
-  const handleStartEdit = () => {
-    if (currentReportId) {
-      const draft = localStorage.getItem(`kt_autosave_${currentReportId}`);
-      if (draft && draft !== report) {
-        if (window.confirm('이전에 작성하다 중단된 자동 저장 내용이 있습니다. 복구하시겠습니까?')) {
-          setReport(draft);
-        }
-      }
-    }
-    setIsEditing(true);
-    setLastSavedTime(null);
-  };
-
-  // ★ 수정 완료 시 DB 저장 및 임시 저장소 비우기
-  const handleUpdateReport = async () => {
-    setIsEditing(false); 
-    if (currentReportId && report) {
-      await supabase.from('inspections').update({ ai_report_text: report }).eq('id', currentReportId);
-      setPastReports(prev => prev.map(item => item.id === currentReportId ? { ...item, ai_report_text: report } : item));
-      localStorage.removeItem(`kt_autosave_${currentReportId}`); // 성공적으로 저장했으므로 임시 파일 파기
-      setLastSavedTime(null);
-    }
-  };
-
-  // ★ 수정 취소 시 임시 저장소 비우고 원본 텍스트로 복귀
-  const handleCancelEdit = () => {
-    if (window.confirm('수정을 취소하시겠습니까? 저장되지 않은 내용은 사라집니다.')) {
-      setIsEditing(false);
-      setLastSavedTime(null);
-      if (currentReportId) {
-        localStorage.removeItem(`kt_autosave_${currentReportId}`);
-        const originalItem = pastReports.find(item => item.id === currentReportId);
-        if (originalItem) setReport(originalItem.ai_report_text);
-      }
-    }
   };
 
   const mdComps = {
@@ -247,13 +272,7 @@ function DashboardContent() {
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes fadeInOut { 0% { opacity: 0; transform: translateY(10px); } 20% { opacity: 1; transform: translateY(0); } 80% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-10px); } }
-        @media print { 
-          body, .print-target, .print-target * { font-family: 'Pretendard', sans-serif !important; visibility: visible; } 
-          body * { visibility: hidden; } 
-          .print-target { position: absolute; left: 0; top: 0; width: 100%; } 
-          .no-print { display: none !important; } 
-          img { page-break-inside: avoid; max-width: 100% !important; border: none !important; }
-        }
+        @media print { body, .print-target, .print-target * { font-family: 'Pretendard', sans-serif !important; visibility: visible; } body * { visibility: hidden; } .print-target { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } img { page-break-inside: avoid; max-width: 100% !important; border: none !important; } }
       `}} />
 
       {showSettingsModal && (
@@ -262,10 +281,7 @@ function DashboardContent() {
             <h3 style={{ margin: '0 0 20px 0', textAlign: 'center' }}>비밀번호 변경</h3>
             <input type="password" placeholder="현재 비밀번호" value={oldPwd} onChange={e => setOldPwd(e.target.value)} style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
             <input type="password" placeholder="새 비밀번호" value={newPwd} onChange={e => setNewPwd(e.target.value)} style={{ width: '100%', padding: '12px', marginBottom: '20px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button type="button" onClick={() => setShowSettingsModal(false)} style={{ flex: 1, padding: '12px', background: '#e2e8f0', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>취소</button>
-              <button type="submit" style={{ flex: 1, padding: '12px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>저장</button>
-            </div>
+            <div style={{ display: 'flex', gap: '10px' }}><button type="button" onClick={() => setShowSettingsModal(false)} style={{ flex: 1, padding: '12px', background: '#e2e8f0', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>취소</button><button type="submit" style={{ flex: 1, padding: '12px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>저장</button></div>
           </form>
         </div>
       )}
@@ -278,9 +294,7 @@ function DashboardContent() {
 
       {analyzing && (
         <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
-          <div style={{ width: '60px', height: '60px', border: '5px solid rgba(255,255,255,0.2)', borderTop: '5px solid #3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '24px' }} />
-          <h3 style={{ color: '#60a5fa', fontSize: '15px', marginBottom: '16px', fontWeight: 'bold' }}>Vision AI 분석 중...</h3>
-          <div style={{ height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><p key={loadingTip} style={{ color: 'white', fontSize: '20px', fontWeight: 'bold', textAlign: 'center', animation: 'fadeInOut 1.5s ease-in-out forwards', margin: 0 }}>"{loadingTip}"</p></div>
+          <div style={{ width: '60px', height: '60px', border: '5px solid rgba(255,255,255,0.2)', borderTop: '5px solid #3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '24px' }} /><h3 style={{ color: '#60a5fa', fontSize: '15px', marginBottom: '16px', fontWeight: 'bold' }}>Vision AI 분석 중...</h3><div style={{ height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><p key={loadingTip} style={{ color: 'white', fontSize: '20px', fontWeight: 'bold', textAlign: 'center', animation: 'fadeInOut 1.5s ease-in-out forwards', margin: 0 }}>"{loadingTip}"</p></div>
         </div>
       )}
 
@@ -291,17 +305,13 @@ function DashboardContent() {
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', alignItems: 'center' }}>
-            <h2 style={{ margin: 0, fontSize: '16px' }}>{workerName}</h2>
-            <span style={{ fontSize: '11px', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '8px' }}>경기설계팀</span>
+            <h2 style={{ margin: 0, fontSize: '16px' }}>{workerName}</h2><span style={{ fontSize: '11px', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '8px' }}>경기설계팀</span>
           </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <span style={{ color: '#2563eb', fontWeight: 'bold' }}>Lv.{level}</span>
-            <div style={{ flex: 1, height: '10px', background: '#e2e8f0', borderRadius: '5px' }}>
-              <div style={{ width: `${Math.min(exp % 100, 100)}%`, height: '100%', background: '#3b82f6' }} />
-            </div>
+            <div style={{ flex: 1, height: '10px', background: '#e2e8f0', borderRadius: '5px' }}><div style={{ width: `${Math.min(exp % 100, 100)}%`, height: '100%', background: '#3b82f6' }} /></div>
           </div>
         </div>
-        
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <button onClick={() => setShowSettingsModal(true)} style={{ padding: '6px 8px', background: '#e2e8f0', color: '#1e293b', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>⚙️ 설정</button>
           <button onClick={handleLogout} style={{ padding: '6px 8px', background: '#ef4444', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '12px' }}>로그아웃</button>
@@ -333,30 +343,28 @@ function DashboardContent() {
           {isEditing ? (
             <div className="no-print" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div style={{ background: '#1e293b', padding: '16px', borderRadius: '12px', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)' }}>
-                {/* ★ 자동 저장 표시등 추가 */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                  <h4 style={{ color: '#60a5fa', margin: 0, fontSize: '14px' }}>💻 보고서 직접 수정 (조치사항 입력)</h4>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h4 style={{ color: '#60a5fa', margin: 0, fontSize: '15px' }}>💻 조치사항 간편 입력</h4>
                   {lastSavedTime && <span style={{ fontSize: '12px', color: '#10b981', fontWeight: 'bold' }}>✓ {lastSavedTime}</span>}
                 </div>
-                <textarea 
-                  value={report} 
-                  onChange={e => setReport(e.target.value)} 
-                  style={{ 
-                    width: '100%', minHeight: '300px', padding: '12px', boxSizing: 'border-box',
-                    fontFamily: "'Consolas', 'Courier New', monospace", fontSize: '14px', lineHeight: '1.6',
-                    background: 'transparent', color: '#f8fafc', border: '1px solid #334155', borderRadius: '8px', outline: 'none', resize: 'vertical'
-                  }} 
-                />
-              </div>
-
-              <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
-                <h4 style={{ margin: '0 0 12px 0', color: '#475569', fontSize: '14px', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>👀 실시간 미리보기</h4>
-                <div style={{ pointerEvents: 'none' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown></div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {editForm.map((item, i) => (
+                    <div key={i} style={{ display: 'flex', gap: '8px', background: '#334155', padding: '10px', borderRadius: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div style={{ width: '140px', color: 'white', fontSize: '13px', fontWeight: 'bold' }}>{item.name}</div>
+                      <select value={item.result} onChange={e => handleFormChange(i, 'result', e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: 'none', outline: 'none' }}>
+                        <option value="">(상태 선택)</option><option value="양호">양호</option><option value="불량">불량</option>
+                      </select>
+                      <input type="text" placeholder="조치사항 입력..." value={item.action} onChange={e => handleFormChange(i, 'action', e.target.value)} style={{ flex: 1, minWidth: '150px', padding: '8px', borderRadius: '6px', border: 'none', outline: 'none' }} />
+                      <input type="text" placeholder="비고..." value={item.note} onChange={e => handleFormChange(i, 'note', e.target.value)} style={{ width: '80px', padding: '8px', borderRadius: '6px', border: 'none', outline: 'none' }} />
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <div style={{ display: 'flex', gap: '10px' }}>
                 <button onClick={handleCancelEdit} style={{ flex: 1, padding: '14px', background: '#e2e8f0', color: '#1e293b', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>취소</button>
-                <button onClick={handleUpdateReport} style={{ flex: 2, padding: '14px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>수정 내용 저장</button>
+                <button onClick={handleUpdateReport} style={{ flex: 2, padding: '14px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>저장 (마크다운 자동 변환)</button>
               </div>
             </div>
           ) : (
