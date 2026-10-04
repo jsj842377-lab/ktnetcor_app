@@ -6,6 +6,9 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function POST(req: NextRequest) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
+    // ★ 수정: Vercel 환경변수에서 모델명을 가져오며, 미설정 시 기본값 사용
+    const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    
     if (!apiKey) {
       return NextResponse.json({ error: '서버에 Gemini API 키가 설정되지 않았습니다.' }, { status: 500 });
     }
@@ -27,17 +30,14 @@ export async function POST(req: NextRequest) {
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         return {
-          inlineData: {
-            data: buffer.toString('base64'),
-            mimeType: file.type,
-          },
+          inlineData: { data: buffer.toString('base64'), mimeType: file.type },
         };
       })
     );
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    // ★ 수정: 404 Not Found 에러 해결을 위해 -latest 접미사 추가
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
+    // ★ 수정: 환경변수로 받아온 모델명 주입
+    const model = genAI.getGenerativeModel({ model: modelName });
     
     const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진들을 꼼꼼히 분석하여, 반드시 아래의 [안전점검 결과보고서] 양식과 100% 동일한 마크다운(Markdown) 표 형태로 결과를 작성해주세요.
 
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
         const errMsg = err.message?.toLowerCase() || '';
 
         if (status === 429 || errMsg.includes('429') || errMsg.includes('quota')) {
-          throw new Error('일일 API 할당량이 모두 소진되었습니다. 내일 다시 시도하거나 유료 플랜으로 전환해주세요.');
+          throw new Error('일일 API 할당량이 모두 소진되었습니다.');
         }
 
         const isOverloaded = status === 503 || errMsg.includes('overloaded') || errMsg.includes('unavailable');
@@ -98,17 +98,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (!result) throw new Error('AI 분석에 실패했습니다.');
-
-    const response = await result.response;
-    const text = response.text();
-
-    return NextResponse.json({ report: text });
+    return NextResponse.json({ report: await result.response.text() });
 
   } catch (error: any) {
-    console.error('AI 분석 백엔드 에러:', error);
-    return NextResponse.json(
-      { error: error.message || 'AI 분석 중 서버 오류가 발생했습니다.' },
-      { status: 500 }
-    );
+    console.error('AI 분석 에러:', error);
+    return NextResponse.json({ error: error.message || '서버 오류 발생' }, { status: 500 });
   }
 }
