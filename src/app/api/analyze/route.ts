@@ -5,7 +5,8 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function POST(req: NextRequest) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
+    // ★ 1차 방어: API 키의 앞뒤 공백(띄어쓰기) 자동 제거
+    const apiKey = process.env.GEMINI_API_KEY?.trim();
     if (!apiKey) {
       return NextResponse.json({ error: '서버에 Gemini API 키가 설정되지 않았습니다.' }, { status: 500 });
     }
@@ -71,11 +72,12 @@ export async function POST(req: NextRequest) {
 
 실제 첨부된 사진 상황에 맞추어 생성하세요.`;
 
+    // ★ 2차 방어: 환경변수의 공백 자동 제거 및 단종된 모델 삭제
+    const envModel = process.env.GEMINI_MODEL?.trim();
     const fallbackModels = [
-      process.env.GEMINI_MODEL,  
-      'gemini-1.5-flash',        
-      'gemini-1.5-pro',          
-      'gemini-pro-vision'        
+      envModel,                  // Vercel 설정값 최우선 (공백 제거됨)
+      'gemini-1.5-flash',        // 표준 비전 모델
+      'gemini-1.5-pro'           // 고성능 비전 모델
     ].filter(Boolean) as string[];
 
     let result;
@@ -93,7 +95,9 @@ export async function POST(req: NextRequest) {
             break; 
           } catch (err: any) {
             const status = err.status || err.response?.status;
+            // 404 모델 없음 에러 시, 지연 없이 즉각 다음 모델로 릴레이
             if (status === 404) throw err; 
+            
             if (status === 429) throw new Error('일일 API 할당량이 소진되었습니다.');
             if (status === 503 && retries < maxRetries - 1) {
               retries++;
@@ -103,14 +107,17 @@ export async function POST(req: NextRequest) {
             throw err;
           }
         }
-        if (result) break;
+        if (result) break; // 하나라도 성공하면 루프 탈출
       } catch (err: any) {
         finalError = err;
         continue; 
       }
     }
 
-    if (!result) throw new Error(finalError?.message || '모든 AI 비전 모델 호출에 실패했습니다.');
+    if (!result) {
+      // 어떤 모델로도 분석에 실패했을 때 정확한 마지막 에러를 반환
+      throw new Error(`모든 AI 모델 호출 실패. 사유: ${finalError?.message}`);
+    }
     
     const response = await result.response;
     return NextResponse.json({ report: response.text() });
