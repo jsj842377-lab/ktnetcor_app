@@ -6,9 +6,6 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function POST(req: NextRequest) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
-    // ★ 수정: Vercel 환경변수에서 모델명을 가져오며, 미설정 시 기본값 사용
-    const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
-    
     if (!apiKey) {
       return NextResponse.json({ error: '서버에 Gemini API 키가 설정되지 않았습니다.' }, { status: 500 });
     }
@@ -30,14 +27,15 @@ export async function POST(req: NextRequest) {
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         return {
-          inlineData: { data: buffer.toString('base64'), mimeType: file.type },
+          inlineData: {
+            data: buffer.toString('base64'),
+            mimeType: file.type,
+          },
         };
       })
     );
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    // ★ 수정: 환경변수로 받아온 모델명 주입
-    const model = genAI.getGenerativeModel({ model: modelName });
     
     const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진들을 꼼꼼히 분석하여, 반드시 아래의 [안전점검 결과보고서] 양식과 100% 동일한 마크다운(Markdown) 표 형태로 결과를 작성해주세요.
 
@@ -70,38 +68,80 @@ export async function POST(req: NextRequest) {
 
 실제 첨부된 사진 상황에 맞추어 위 양식 그대로 결과를 생성하세요.`;
 
-    let retries = 0;
-    const maxRetries = 3;
+    // ★ 404 Not Found 에러를 원천 차단하는 모델 자동 릴레이(Fallback) 시스템
+    const fallbackModels = [
+      process.env.GEMINI_MODEL,  // 1순위: Vercel에 설정한 환경변수 우선 적용 (없으면 무시됨)
+      'gemini-1.5-flash-002',    // 2순위: 1.5 플래시 최신 명시적 버전
+      'gemini-1.5-flash-001',    // 3순위: 1.5 플래시 초기 버전
+      'gemini-1.5-pro',          // 4순위: 1.5 프로 버전
+      'gemini-1.0-pro',          // 5순위: 1.0 프로 버전 (모든 지역 지원 보장)
+      'gemini-pro'               // 6순위: 구형 레거시 식별자
+    ].filter(Boolean) as string[];
+
     let result;
+    let finalError;
 
-    while (retries < maxRetries) {
+    for (const modelName of fallbackModels) {
       try {
-        result = await model.generateContent([prompt, ...imageParts]);
-        break; 
+        const model = genAI.getGenerativeModel({ model: modelName });
+        
+        let retries = 0;
+        const maxRetries = 2;
+        
+        while (retries < maxRetries) {
+          try {
+            result = await model.generateContent([prompt, ...imageParts]);
+            break; // 정상 분석 완료 시 while문 탈출
+          } catch (err: any) {
+            const status = err.status || err.response?.status;
+            const errMsg = err.message?.toLowerCase() || '';
+
+            // 404 (모델 없음) 에러면 재시도 없이 곧바로 다음 모델로 교체
+            if (status === 404 || errMsg.includes('404') || errMsg.includes('not found')) {
+              throw err; 
+            }
+
+            // 할당량 초과 에러
+            if (status === 429 || errMsg.includes('429') || errMsg.includes('quota')) {
+              throw new Error('일일 API 할당량이 모두 소진되었습니다. 내일 다시 시도해주세요.');
+            }
+
+            // 서버 과부하 에러 시 지수 백오프(Exponential Backoff) 지연 후 재시도
+            const isOverloaded = status === 503 || errMsg.includes('overloaded') || errMsg.includes('unavailable');
+            if (isOverloaded && retries < maxRetries) {
+              retries++;
+              await delay(Math.pow(2, retries) * 1500);
+            } else {
+              throw err;
+            }
+          }
+        }
+        
+        if (result) {
+          console.log(`[분석 성공] ${modelName} 모델이 호출되었습니다.`);
+          break; // 정상 완료되었으므로 for문 전체 탈출
+        }
       } catch (err: any) {
-        retries++;
-        const status = err.status || err.response?.status;
-        const errMsg = err.message?.toLowerCase() || '';
-
-        if (status === 429 || errMsg.includes('429') || errMsg.includes('quota')) {
-          throw new Error('일일 API 할당량이 모두 소진되었습니다.');
-        }
-
-        const isOverloaded = status === 503 || errMsg.includes('overloaded') || errMsg.includes('unavailable');
-        if (isOverloaded && retries < maxRetries) {
-          const waitTime = Math.pow(2, retries) * 1500;
-          await delay(waitTime);
-        } else {
-          throw err; 
-        }
+        console.warn(`[모델 호출 실패] ${modelName} 사용 불가. 다음 모델로 전환합니다.`);
+        finalError = err;
+        continue; 
       }
     }
 
-    if (!result) throw new Error('AI 분석에 실패했습니다.');
-    return NextResponse.json({ report: await result.response.text() });
+    if (!result) {
+      throw new Error(finalError?.message || '사용 가능한 AI 모델이 서버에 존재하지 않거나 호출 권한이 없습니다.');
+    }
+
+    const response = await result.response;
+    const text = response.text();
+
+    return NextResponse.json({ report: text });
 
   } catch (error: any) {
-    console.error('AI 분석 에러:', error);
-    return NextResponse.json({ error: error.message || '서버 오류 발생' }, { status: 500 });
+    console.error('AI 분석 백엔드 에러:', error);
+    return NextResponse.json(
+      { error: error.message || 'AI 분석 중 서버 오류가 발생했습니다.' },
+      { status: 500 }
+    );
   }
 }
