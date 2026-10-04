@@ -686,3 +686,5 @@ function DashboardContent() {
     </div>
   );
 }
+
+export default function Dashboard() { return <Suspense fallback={<div style={{ padding: '40px', textAlign: 'center' }}>로딩중...</div>}><DashboardContent /></Suspense>; }
