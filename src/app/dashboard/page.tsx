@@ -25,11 +25,13 @@ function DashboardContent() {
   const [analyzing, setAnalyzing] = useState<boolean>(false);
   const [isDataLoaded, setIsDataLoaded] = useState<boolean>(false);
   
+  // ★ 고화질 PDF 생성 대기 시간을 사용자에게 알려주는 상태 추가
+  const [isPdfGenerating, setIsPdfGenerating] = useState<boolean>(false);
+  
   const [gender, setGender] = useState<'M'|'F'>('M');
   const [dbTips, setDbTips] = useState<string[]>(['안전이 최우선입니다.']);
   const [loadingTip, setLoadingTip] = useState<string>('');
   
-  // ★ 기존 하드코딩된 입력값을 비우고 초기 상태를 빈 문자열로 변경
   const [projectNumberInput, setProjectNumberInput] = useState<string>('');
   const [workTypeInput, setWorkTypeInput] = useState<string>('');
   const [workDescInput, setWorkDescInput] = useState<string>('');
@@ -128,19 +130,10 @@ function DashboardContent() {
           setPreviewUrls(savedFiles.map(file => URL.createObjectURL(file))); 
         }
 
-        let { data: workerData } = await supabase
-          .from('workers')
-          .select('*')
-          .eq('worker_name', workerName)
-          .maybeSingle();
+        let { data: workerData } = await supabase.from('workers').select('*').eq('worker_name', workerName).maybeSingle();
 
         if (!workerData) {
-          const { data: newWorker } = await supabase
-            .from('workers')
-            .insert([{ worker_name: workerName, exp: 0, level: 1, password: '1234' }])
-            .select()
-            .single();
-            
+          const { data: newWorker } = await supabase.from('workers').insert([{ worker_name: workerName, exp: 0, level: 1, password: '1234' }]).select().single();
           if (newWorker) workerData = newWorker;
         }
 
@@ -148,12 +141,7 @@ function DashboardContent() {
           setWorkerId(workerData.id);
           setExpAndLevel(workerData.exp || 0, workerData.level || 1);
 
-          const { data: reportsData } = await supabase
-            .from('inspections')
-            .select('*')
-            .eq('worker_id', workerData.id)
-            .order('created_at', { ascending: false });
-          
+          const { data: reportsData } = await supabase.from('inspections').select('*').eq('worker_id', workerData.id).order('created_at', { ascending: false });
           if (reportsData) setPastReports(reportsData);
         }
       } catch (err) {
@@ -237,26 +225,44 @@ function DashboardContent() {
     html2pdf().set(opt).from(element).save();
   };
 
+  // ★ 완벽한 원패스 PDF 다운로드 로직 (사진 로딩 대기열 포함)
   const handleDownloadPastPDF = async (item: any) => {
-    setPrintItem(item);
+    setIsPdfGenerating(true);
+    setPrintItem(item); // 렌더링 시작
+    
+    // 리액트가 DOM을 그릴 수 있도록 약간 대기
     setTimeout(async () => {
       const element = document.getElementById('past-report-pdf');
-      if (!element) return;
+      if (!element) {
+        setIsPdfGenerating(false);
+        return;
+      }
       
+      // ★ 100% 보장: 내부의 모든 이미지 렌더링이 완료될 때까지 Promise 대기
+      const images = Array.from(element.getElementsByTagName('img'));
+      await Promise.all(images.map(img => {
+        if (img.complete) return Promise.resolve();
+        return new Promise(resolve => {
+          img.onload = resolve;
+          img.onerror = resolve; // 에러가 나도 진행을 막지 않음
+        });
+      }));
+
       const html2pdf = (await import('html2pdf.js')).default;
       const opt = {
         margin: 15, 
-        filename: `안전기록_${new Date(item.created_at).getTime()}.pdf`,
+        filename: `현장점검기록_${new Date(item.created_at).getTime()}.pdf`,
         image: { type: 'jpeg' as const, quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' }, // 배경을 흰색으로 고정하여 전문적인 문서 형태 유지
         jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
-        pagebreak: { mode: 'css' } 
+        pagebreak: { mode: ['css', 'legacy'] } 
       };
 
       html2pdf().set(opt).from(element).save().then(() => {
-        setPrintItem(null);
+        setPrintItem(null); // 문서 숨김
+        setIsPdfGenerating(false); // 로딩 스피너 종료
       });
-    }, 1500); 
+    }, 100); 
   };
 
   const toggleGender = () => { const newGender = gender === 'M' ? 'F' : 'M'; setGender(newGender); localStorage.setItem(`kt_gender_${workerName}`, newGender); };
@@ -330,8 +336,6 @@ function DashboardContent() {
       const formData = new FormData(); 
       files.forEach(f => formData.append('images', f)); 
       formData.append('photoDate', photoDateStr); 
-      
-      // ★ 빈 값이면 AI가 당황하지 않게 '미입력'으로 처리
       formData.append('projectNumber', projectNumberInput || '미입력'); 
       formData.append('workType', workTypeInput || '미입력'); 
       formData.append('workDesc', workDescInput || '미입력'); 
@@ -409,6 +413,15 @@ function DashboardContent() {
         }
       `}} />
 
+      {/* ★ PDF 다운로드 스피너 애니메이션 */}
+      {isPdfGenerating && (
+        <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: '60px', height: '60px', border: '5px solid rgba(255,255,255,0.2)', borderTop: '5px solid #10b981', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '24px' }} />
+          <h3 style={{ color: 'white', fontSize: '18px', fontWeight: 'bold' }}>문서를 병합하고 있습니다...</h3>
+          <p style={{ color: '#94a3b8', fontSize: '13px', marginTop: '10px' }}>(현장 사진 고화질 로딩 대기중)</p>
+        </div>
+      )}
+
       {showSettingsModal && (
         <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.8)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <form onSubmit={handleChangePassword} style={{ background: theme.cardBg, padding: '30px', borderRadius: '0', width: '90%', maxWidth: '320px', boxSizing: 'border-box', border: `1px solid ${theme.border}` }}>
@@ -458,20 +471,16 @@ function DashboardContent() {
         </div>
       </div>
 
-      {/* ★ 사전 정보 입력란 명확한 라벨링 및 예시 플레이스홀더 적용 */}
       <div className="no-print" style={{ background: theme.cardBg, padding: '20px', borderRadius: '0', border: `1px solid ${theme.border}`, marginBottom: '16px' }}>
         <h3 style={{ margin: '0 0 16px 0', fontSize: '15px', color: theme.textMain }}>📝 사전 정보 입력</h3>
-        
         <div style={{ marginBottom: '12px' }}>
           <label style={{ display: 'block', fontSize: '13px', color: theme.textSub, marginBottom: '6px', fontWeight: 'bold' }}>공사번호</label>
           <input type="text" value={projectNumberInput} onChange={e => setProjectNumberInput(e.target.value)} placeholder="예: 안산-설비-2026-0096" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
         </div>
-
         <div style={{ marginBottom: '12px' }}>
           <label style={{ display: 'block', fontSize: '13px', color: theme.textSub, marginBottom: '6px', fontWeight: 'bold' }}>작업공정</label>
           <input type="text" value={workTypeInput} onChange={e => setWorkTypeInput(e.target.value)} placeholder="예: 초고속 통신망 설비 점검" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
         </div>
-
         <div style={{ marginBottom: '4px' }}>
           <label style={{ display: 'block', fontSize: '13px', color: theme.textSub, marginBottom: '6px', fontWeight: 'bold' }}>작업내용</label>
           <input type="text" value={workDescInput} onChange={e => setWorkDescInput(e.target.value)} placeholder="예: 현장 안전 수칙 준수 및 자재 적재 상태 확인" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
@@ -599,17 +608,23 @@ function DashboardContent() {
         )}
       </div>
 
+      {/* ★ 실제 PDF 캡처가 이루어지는 규격화된 문서 레이아웃 */}
       {printItem && (
-        <div id="past-report-pdf" className="print-target" style={{ padding: '20px', background: 'white', color: 'black' }}>
-          <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown>
-          {printItem.image_url && (
-            <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              <h4 style={{ width: '100%', borderBottom: `1px solid #cbd5e1`, paddingBottom: '8px', margin: '20px 0 10px 0', color: 'black' }}>📸 현장 사진 (첨부)</h4>
-              {printItem.image_url.split(',').map((u: string, i: number) => (
-                <img key={i} src={u} crossOrigin="anonymous" alt="첨부사진" className="avoid-break" style={{ width: '48%', maxHeight: '400px', objectFit: 'contain', borderRadius: '0', border: `1px solid #cbd5e1` }} />
-              ))}
-            </div>
-          )}
+        <div className="print-target-wrapper" style={{ position: 'absolute', top: '-9999px', left: 0, width: '100%' }}>
+          <div id="past-report-pdf" className="print-target" style={{ padding: '40px', background: 'white', color: 'black', width: '800px', margin: '0 auto', boxSizing: 'border-box' }}>
+            <h2 style={{ textAlign: 'center', fontSize: '24px', borderBottom: '2px solid black', paddingBottom: '16px', marginBottom: '24px' }}>안전점검 결과보고서</h2>
+            <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown>
+            {printItem.image_url && (
+              <div style={{ marginTop: '30px', pageBreakInside: 'avoid' }}>
+                <h4 style={{ width: '100%', borderBottom: `2px solid black`, paddingBottom: '8px', margin: '20px 0 15px 0', color: 'black', fontSize: '18px' }}>📸 현장 사진 (첨부)</h4>
+                <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                  {printItem.image_url.split(',').filter(Boolean).map((u: string, i: number) => (
+                    <img key={i} src={u} crossOrigin="anonymous" className="avoid-break" style={{ width: '47%', height: '300px', objectFit: 'cover', border: `1px solid #ccc` }} alt="첨부사진" />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
