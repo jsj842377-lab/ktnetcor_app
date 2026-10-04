@@ -219,6 +219,7 @@ function DashboardContent() {
       html2canvas: { scale: 2, useCORS: true, backgroundColor: isDarkMode ? '#1e293b' : '#ffffff' },
       jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
     };
+
     html2pdf().set(opt).from(element).save();
   };
 
@@ -247,7 +248,6 @@ function DashboardContent() {
     if (files.length === 0) return alert('사진을 추가해주세요!');
     setAnalyzing(true); setReport(null); setIsEditing(false);
     try {
-      // ★ 해결 1: 업로드한 모든 사진을 스토리지에 병렬로 업로드하고, URL들을 쉼표로 묶습니다.
       const uploadedUrls: string[] = [];
       for (const f of files) {
         const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${f.name.split('.').pop()}`;
@@ -257,8 +257,9 @@ function DashboardContent() {
           if (data?.publicUrl) uploadedUrls.push(data.publicUrl);
         }
       }
-      const imageUrlsString = uploadedUrls.join(','); // 예: "url1,url2,url3"
+      const imageUrlsString = uploadedUrls.join(',');
 
+      // ★ 사진 촬영(수정) 날짜를 추출하여 AI에게 전송 (마크다운 표의 '점검일자'에 기록됨)
       const rawDate = new Date(files[0].lastModified); 
       const photoDateStr = `${rawDate.getFullYear()}년 ${rawDate.getMonth() + 1}월 ${rawDate.getDate()}일`;
       
@@ -270,24 +271,19 @@ function DashboardContent() {
       formData.append('workDesc', workDescInput); 
       formData.append('inspector', workerName); 
       
-      const res = await fetch('/api/analyze', { method: 'POST', body: formData }); 
-      const resData = await res.json();
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData }); const resData = await res.json();
       if (!res.ok) throw new Error(resData.error || '분석 실패');
       
       await localforage.removeItem('pending_photos'); setFiles([]); setReport(resData.report);
       
       if (workerId) {
-        // ★ 해결 2: DB 인서트 시 에러(RLS 블락 등)가 발생하면 강제로 캐치해서 alert 창을 띄우도록 수정
         const { data: insertedData, error: dbError } = await supabase.from('inspections').insert([
           { worker_id: workerId, image_url: imageUrlsString, ai_report_text: resData.report, status: '완료' }
         ]).select().single();
         
-        if (dbError) throw new Error(`DB 저장 실패(RLS 오류 가능성): ${dbError.message}`);
+        if (dbError) throw new Error(`DB 저장 실패: ${dbError.message}`);
 
-        if (insertedData) { 
-          setCurrentReportId(insertedData.id); 
-          setPastReports(prev => [insertedData, ...prev]); 
-        }
+        if (insertedData) { setCurrentReportId(insertedData.id); setPastReports(prev => [insertedData, ...prev]); }
         
         const hasDanger = resData.report.includes('불량'); 
         if (hasDanger) alert('⚠️ 위험 요소 발견! 보너스 10 EXP 추가 지급');
@@ -448,24 +444,34 @@ function DashboardContent() {
       <div className="no-print" style={{ marginTop: '30px' }}>
         <button onClick={() => setShowPast(!showPast)} style={{ width: '100%', padding: '16px', background: theme.cardBg, border: `1px solid ${theme.border}`, color: theme.textMain, borderRadius: '12px', cursor: 'pointer' }}>과거 기록 보기 ({pastReports.length}건)</button>
         {showPast && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '16px' }}>
             {pastReports.map((item, i) => {
-              // ★ 해결 3: 과거 기록 렌더링 시 쉼표로 묶여 저장된 이미지 URL들을 모두 분리하여 화면에 뿌려줍니다.
               const savedUrls = item.image_url ? item.image_url.split(',') : [];
               return (
-                <div key={i} style={{ padding: '16px', background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '12px' }}>
-                  <div style={{ color: '#2563eb', fontWeight: 'bold', marginBottom: '10px' }}>{new Date(item.created_at).toLocaleString()}</div>
+                <div key={i} style={{ padding: '24px', background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: `1px solid ${theme.border}`, paddingBottom: '12px' }}>
+                    <h4 style={{ margin: 0, color: '#2563eb', fontSize: '16px' }}>📄 점검 보고서</h4>
+                    <span style={{ color: theme.textSub, fontSize: '13px' }}>저장일시: {new Date(item.created_at).toLocaleString()}</span>
+                  </div>
                   
+                  {/* ★ 보고서 양식 원본 크기 100% 유지 (스크롤 제거) */}
+                  <div style={{ background: theme.bg, padding: '16px', borderRadius: '8px' }}>
+                    <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown>
+                  </div>
+                  
+                  {/* ★ 하단에 다중 사진 크고 깔끔하게 렌더링 */}
                   {savedUrls.length > 0 && (
-                    <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', marginBottom: '10px', paddingBottom: '8px' }}>
-                      {savedUrls.map((u: string, idx: number) => (
-                        <img key={idx} src={u} alt="사진" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', flexShrink: 0 }} />
-                      ))}
+                    <div style={{ marginTop: '20px' }}>
+                      <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '0 0 16px 0', color: theme.textMain }}>📸 첨부된 현장 사진</h4>
+                      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                        {savedUrls.map((u: string, idx: number) => (
+                          <img key={idx} src={u} alt="사진" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '8px', border: `1px solid ${theme.border}` }} />
+                        ))}
+                      </div>
                     </div>
                   )}
                   
-                  <div style={{ maxHeight: '150px', overflowY: 'auto', background: theme.bg, padding: '10px', borderRadius: '8px' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown></div>
-                  <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 600); }} style={{ width: '100%', marginTop: '10px', padding: '10px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '8px', cursor: 'pointer' }}>인쇄</button>
+                  <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 600); }} style={{ width: '100%', marginTop: '20px', padding: '14px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>이 보고서 인쇄하기</button>
                 </div>
               );
             })}
@@ -476,12 +482,11 @@ function DashboardContent() {
       {printItem && (
         <div className="print-target" style={{ padding: '20px', background: 'white', color: 'black' }}>
           <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown>
-          {/* ★ 해결 4: 과거 기록 PDF 인쇄 모드에서도 저장된 모든 사진을 보여줍니다. */}
           {printItem.image_url && (
             <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '20px 0 10px 0', color: theme.textMain }}>📸 현장 사진 (첨부)</h4>
+              <h4 style={{ width: '100%', borderBottom: `1px solid #cbd5e1`, paddingBottom: '8px', margin: '20px 0 10px 0', color: 'black' }}>📸 현장 사진 (첨부)</h4>
               {printItem.image_url.split(',').map((u: string, i: number) => (
-                <img key={i} src={u} alt="첨부사진" style={{ width: '48%', maxHeight: '400px', objectFit: 'contain', borderRadius: '8px', border: `1px solid ${theme.border}` }} />
+                <img key={i} src={u} alt="첨부사진" style={{ width: '48%', maxHeight: '400px', objectFit: 'contain', borderRadius: '8px', border: `1px solid #cbd5e1` }} />
               ))}
             </div>
           )}
