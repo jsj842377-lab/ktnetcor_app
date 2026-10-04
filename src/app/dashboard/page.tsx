@@ -14,6 +14,10 @@ function DashboardContent() {
   const router = useRouter();
   const workerName = searchParams.get('worker') || '작업자';
 
+  // ★ 현재 연도 및 분기 계산
+  const currentYear = new Date().getFullYear();
+  const currentQuarter = Math.floor(new Date().getMonth() / 3) + 1;
+
   const [workerId, setWorkerId] = useState<string | null>(null);
   const [level, setLevel] = useState<number>(1);
   const [exp, setExp] = useState<number>(0);
@@ -21,7 +25,6 @@ function DashboardContent() {
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [analyzing, setAnalyzing] = useState<boolean>(false);
   
-  // ★ 추가: 공사번호, 작업공정, 작업내용 입력 상태
   const [projectNumberInput, setProjectNumberInput] = useState<string>('안산-설비-2026-0096');
   const [workTypeInput, setWorkTypeInput] = useState<string>('초고속 통신망 설비 점검');
   const [workDescInput, setWorkDescInput] = useState<string>('현장 안전 수칙 준수 및 자재 적재 상태 확인');
@@ -76,23 +79,45 @@ function DashboardContent() {
       }
 
       if (workerData) {
-        setWorkerId(workerData.id);
-        setLevel(workerData.level);
-        setExp(workerData.exp);
-
         const { data: reportsData } = await supabase
           .from('inspections')
           .select('*')
           .eq('worker_id', workerData.id)
           .order('created_at', { ascending: false });
-        
+
+        // ★ 캐릭터 분기별 초기화 로직
+        let lastActiveDate = new Date(workerData.created_at);
+        if (reportsData && reportsData.length > 0) {
+          const lastReportDate = new Date(reportsData[0].created_at);
+          if (lastReportDate > lastActiveDate) {
+            lastActiveDate = lastReportDate;
+          }
+        }
+
+        const lastActiveYear = lastActiveDate.getFullYear();
+        const lastActiveQuarter = Math.floor(lastActiveDate.getMonth() / 3) + 1;
+
+        // 현재 연도가 더 크거나, 연도는 같은데 현재 분기가 더 큰 경우 초기화 수행
+        if (currentYear > lastActiveYear || (currentYear === lastActiveYear && currentQuarter > lastActiveQuarter)) {
+          if (workerData.exp > 0 || workerData.level > 1) {
+            workerData.exp = 0;
+            workerData.level = 1;
+            await supabase.from('workers').update({ exp: 0, level: 1 }).eq('id', workerData.id);
+            alert(`🎉 새로운 시즌(${currentYear}년 ${currentQuarter}분기)이 시작되어 캐릭터가 1레벨로 초기화되었습니다! 새롭게 달려보세요.`);
+          }
+        }
+
+        setWorkerId(workerData.id);
+        setLevel(workerData.level);
+        setExp(workerData.exp);
+
         if (reportsData) setPastReports(reportsData);
       }
     };
     
     loadPendingPhotos();
     if (workerName) fetchWorkerData();
-  }, [workerName]);
+  }, [workerName, currentYear, currentQuarter]);
 
   const handleLogout = () => {
     if(window.confirm('정말 로그아웃 하시겠습니까?')) {
@@ -142,7 +167,6 @@ function DashboardContent() {
     try {
       const firstFile = files[0];
       
-      // ★ 요구사항 반영: 점검일자는 사진 파일의 실제 수정(촬영) 날짜로 고정
       const rawPhotoDate = new Date(firstFile.lastModified);
       const formattedPhotoDate = `${rawPhotoDate.getFullYear()}년 ${rawPhotoDate.getMonth() + 1}월 ${rawPhotoDate.getDate()}일 ${rawPhotoDate.getHours()}시 ${rawPhotoDate.getMinutes()}분`;
 
@@ -283,12 +307,18 @@ function DashboardContent() {
         </div>
       )}
 
+      {/* ★ 프로필 및 시즌 표시 영역 */}
       <div className="no-print" style={{ padding: '16px', borderRadius: '12px', background: '#f1f5f9', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px', boxSizing: 'border-box' }}>
         <div style={{ fontSize: '36px', padding: '8px', background: 'white', borderRadius: '50%', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
           {level === 1 ? '🐣' : level < 3 ? '👷' : '🦸‍♂️'}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h2 style={{ margin: '0 0 8px 0', fontSize: '16px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{workerName} 작업자 대시보드</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+            <h2 style={{ margin: 0, fontSize: '16px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{workerName}</h2>
+            <span style={{ fontSize: '11px', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '8px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+              {currentYear}년 {currentQuarter}분기 시즌
+            </span>
+          </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <span style={{ fontWeight: 'bold', color: '#2563eb', fontSize: '14px' }}>Lv. {level}</span>
             <div style={{ flex: 1, height: '12px', background: '#e2e8f0', borderRadius: '6px', overflow: 'hidden' }}>
@@ -306,7 +336,6 @@ function DashboardContent() {
         </button>
       </div>
 
-      {/* ★ 보고서 사전 정보 입력 섹션 추가 */}
       <div className="no-print" style={{ background: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '16px' }}>
         <h3 style={{ margin: '0 0 12px 0', fontSize: '15px', color: '#1e293b' }}>📝 보고서 사전 정보 입력</h3>
         
@@ -447,7 +476,7 @@ function DashboardContent() {
                     </ReactMarkdown>
                   </div>
                   <button onClick={() => handlePrintPast(item)} style={{ width: '100%', padding: '14px', background: '#1e293b', color: 'white', border: 'none', borderRadius: '10px', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', boxSizing: 'border-box' }}>
-                    🖨️ 이 보고서만 PDF로 저장
+                    🖨️️ 이 보고서만 PDF로 저장
                   </button>
                 </div>
               ))
