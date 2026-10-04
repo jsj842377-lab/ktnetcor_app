@@ -69,7 +69,6 @@ function DashboardContent() {
     border: '#cbd5e1', inputBg: '#f8fafc', mdTableHead: '#f1f5f9', btnCancel: '#e2e8f0'
   };
 
-  // ★ 현재 보고서용 오늘 날짜 동적 생성 (YYYY-MM-DD)
   const todayDate = new Date();
   const todayStr = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`;
 
@@ -212,7 +211,6 @@ function DashboardContent() {
     }
   };
 
-  // ★ 1. 새 보고서 캡처 파일명 동적 조합 (날짜 + 시간 + 이름)
   const handleCapturePDF = async () => {
     const element = reportRef.current;
     if (!element) return;
@@ -233,7 +231,6 @@ function DashboardContent() {
     html2pdf().set(opt).from(element).save();
   };
 
-  // ★ 2. 과거 보고서 캡처 파일명 동적 조합 (날짜 + 시간 + 이름)
   const handleDownloadPastPDF = async (item: any) => {
     setIsPdfGenerating(true);
     setPrintItem(item); 
@@ -273,6 +270,36 @@ function DashboardContent() {
         setIsPdfGenerating(false); 
       });
     }, 100); 
+  };
+
+  // ★ 완벽한 브라우저 인쇄(프린트) 함수 추가
+  const handlePrintPastReport = async (item: any) => {
+    setIsPdfGenerating(true); // 로딩 스피너 작동
+    setPrintItem(item); // 렌더링 타겟 마운트
+    
+    setTimeout(async () => {
+      const element = document.getElementById('past-report-pdf');
+      if (element) {
+        // 모든 사진이 완벽하게 불러와질 때까지 비동기 대기
+        const images = Array.from(element.getElementsByTagName('img'));
+        await Promise.all(images.map(img => {
+          if (img.complete) return Promise.resolve();
+          return new Promise(resolve => {
+            img.onload = resolve;
+            img.onerror = resolve; 
+          });
+        }));
+      }
+      
+      // 로딩 스피너 종료
+      setIsPdfGenerating(false);
+      
+      // 스피너가 완전히 사라진 직후에만 인쇄 창 호출
+      setTimeout(() => {
+        window.print();
+        setPrintItem(null); // 인쇄 종료 후 타겟 해제
+      }, 300);
+    }, 100);
   };
 
   const toggleGender = () => { const newGender = gender === 'M' ? 'F' : 'M'; setGender(newGender); localStorage.setItem(`kt_gender_${workerName}`, newGender); };
@@ -408,6 +435,7 @@ function DashboardContent() {
 
   return (
     <div style={{ maxWidth: '640px', margin: '0 auto', padding: '16px', fontFamily: "'Pretendard', sans-serif" }}>
+      {/* ★ 백지 렌더링 방지를 위한 완벽한 인쇄용 CSS */}
       <style dangerouslySetInnerHTML={{ __html: `
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -415,10 +443,15 @@ function DashboardContent() {
         
         .avoid-break { page-break-inside: avoid !important; break-inside: avoid !important; }
         
+        @media screen { 
+          .print-only { display: none !important; } 
+        }
+        
         @media print { 
-          body, .print-target, .print-target * { font-family: 'Pretendard', sans-serif !important; visibility: visible; color: #000 !important; background-color: #fff !important; border-color: #000 !important; } 
+          body, html { background-color: #fff !important; color: #000 !important; margin: 0; padding: 0; }
           body * { visibility: hidden; } 
-          .print-target { position: absolute; left: 0; top: 0; width: 100%; } 
+          .print-area, .print-area * { visibility: visible; color: #000 !important; } 
+          .print-area { position: absolute; left: 0; top: 0; width: 100%; } 
           .no-print { display: none !important; } 
         }
       `}} />
@@ -426,7 +459,7 @@ function DashboardContent() {
       {isPdfGenerating && (
         <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ width: '60px', height: '60px', border: '5px solid rgba(255,255,255,0.2)', borderTop: '5px solid #10b981', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '24px' }} />
-          <h3 style={{ color: 'white', fontSize: '18px', fontWeight: 'bold' }}>문서를 병합하고 있습니다...</h3>
+          <h3 style={{ color: 'white', fontSize: '18px', fontWeight: 'bold' }}>문서를 준비하고 있습니다...</h3>
           <p style={{ color: '#94a3b8', fontSize: '13px', marginTop: '10px' }}>(현장 사진 고화질 로딩 대기중)</p>
         </div>
       )}
@@ -509,8 +542,9 @@ function DashboardContent() {
 
       <button className="no-print" onClick={handleUploadAndAnalyze} disabled={analyzing || files.length === 0} style={{ width: '100%', padding: '16px', background: files.length ? '#2563eb' : theme.btnCancel, color: files.length ? 'white' : theme.textSub, border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>일괄 분석하기</button>
 
+      {/* ★ 현재 작성 중인 새 보고서 렌더링 영역 (인쇄 시 자동 치환됨) */}
       {report && (
-        <div className={printItem ? "no-print" : "print-target"} style={{ marginTop: '20px', padding: '20px', background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '0' }}>
+        <div className={printItem ? "no-print" : "print-area"} style={{ marginTop: '20px', padding: '20px', background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '0' }}>
           {isEditing ? (
             <div className="no-print" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div style={{ background: '#1e293b', padding: '16px', borderRadius: '0', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)' }}>
@@ -540,9 +574,8 @@ function DashboardContent() {
             </div>
           ) : (
             <>
-              {/* ★ 현재 작성중인 새 보고서 렌더링 영역 (다이내믹 제목 추가) */}
-              <div ref={reportRef} style={{ padding: '20px', background: theme.cardBg, borderRadius: '0' }}>
-                <h2 className="print-title" style={{ textAlign: 'center', fontSize: '24px', borderBottom: `2px solid ${theme.border}`, paddingBottom: '16px', marginBottom: '24px', color: theme.textMain }}>
+              <div ref={reportRef}>
+                <h2 className="print-only" style={{ textAlign: 'center', fontSize: '24px', borderBottom: `2px solid #000`, paddingBottom: '16px', marginBottom: '24px', color: '#000' }}>
                   {todayStr} {workerName} 안전점검 보고서
                 </h2>
                 <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
@@ -609,7 +642,8 @@ function DashboardContent() {
                       )}
                       
                       <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                        <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 1500); }} style={{ flex: 1, padding: '14px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>인쇄</button>
+                        {/* ★ 인쇄 버튼 클릭 시 handlePrintPastReport 실행 */}
+                        <button onClick={() => handlePrintPastReport(item)} style={{ flex: 1, padding: '14px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>인쇄</button>
                         <button onClick={() => handleDownloadPastPDF(item)} style={{ flex: 1, padding: '14px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>PDF 다운로드</button>
                       </div>
                     </div>
@@ -621,18 +655,20 @@ function DashboardContent() {
         )}
       </div>
 
+      {/* ★ 과거 보고서 인쇄 및 PDF용 투명 컨테이너 (좌표 꼼수 대신 .print-only 방식 사용) */}
       {printItem && (() => {
-        // ★ 과거 보고서 PDF 렌더링용 날짜 동적 생성 로직
         const pastDate = new Date(printItem.created_at);
         const pastDateStr = `${pastDate.getFullYear()}-${String(pastDate.getMonth() + 1).padStart(2, '0')}-${String(pastDate.getDate()).padStart(2, '0')}`;
         
         return (
-          <div className="print-target-wrapper" style={{ position: 'absolute', top: '-9999px', left: 0, width: '100%' }}>
-            <div id="past-report-pdf" className="print-target" style={{ padding: '40px', background: 'white', color: 'black', width: '800px', margin: '0 auto', boxSizing: 'border-box' }}>
-              <h2 style={{ textAlign: 'center', fontSize: '24px', borderBottom: '2px solid black', paddingBottom: '16px', marginBottom: '24px' }}>
+          <div className="print-area print-only" style={{ background: 'white', color: 'black', width: '100%' }}>
+            <div id="past-report-pdf" style={{ padding: '40px', background: 'white', color: 'black', width: '100%', maxWidth: '800px', margin: '0 auto', boxSizing: 'border-box' }}>
+              <h2 style={{ textAlign: 'center', fontSize: '24px', borderBottom: '2px solid black', paddingBottom: '16px', marginBottom: '24px', color: 'black' }}>
                 {pastDateStr} {workerName} 안전점검 보고서
               </h2>
-              <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown>
+              <div style={{ color: 'black' }}>
+                <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown>
+              </div>
               {printItem.image_url && (
                 <div style={{ marginTop: '30px', pageBreakInside: 'avoid' }}>
                   <h4 style={{ width: '100%', borderBottom: `2px solid black`, paddingBottom: '8px', margin: '20px 0 15px 0', color: 'black', fontSize: '18px' }}>📸 현장 사진 (첨부)</h4>
@@ -650,5 +686,3 @@ function DashboardContent() {
     </div>
   );
 }
-
-export default function Dashboard() { return <Suspense fallback={<div style={{ padding: '40px', textAlign: 'center' }}>로딩중...</div>}><DashboardContent /></Suspense>; }
