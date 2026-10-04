@@ -15,7 +15,10 @@ const ALLOWED_WORKERS = ['전소정', '김철수', '이영희', '박지민', '�
 function DashboardContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const workerName = searchParams.get('worker') || '작업자';
+  
+  // ★ URL 파라미터 또는 로컬스토리지에 작업자 이름을 안전하게 고정
+  const queryWorker = searchParams.get('worker');
+  const [workerName, setWorkerName] = useState<string>('작업자');
 
   const { isDarkMode, toggleTheme } = useTheme();
 
@@ -70,10 +73,21 @@ function DashboardContent() {
   };
 
   useEffect(() => {
-    if (!ALLOWED_WORKERS.includes(workerName)) {
-      alert('접근 권한이 없습니다.'); router.push('/'); return;
+    let currentWorker = queryWorker;
+    if (currentWorker) {
+      localStorage.setItem('kt_current_worker', currentWorker);
+    } else {
+      currentWorker = localStorage.getItem('kt_current_worker') || '작업자';
     }
-    const savedGender = localStorage.getItem(`kt_gender_${workerName}`);
+
+    if (!ALLOWED_WORKERS.includes(currentWorker)) {
+      alert('접근 권한이 없습니다.'); 
+      router.push('/'); 
+      return;
+    }
+
+    setWorkerName(currentWorker);
+    const savedGender = localStorage.getItem(`kt_gender_${currentWorker}`);
     if (savedGender === 'F') setGender('F');
 
     const fetchTips = async () => {
@@ -81,7 +95,7 @@ function DashboardContent() {
       if (data && data.length > 0) setDbTips(data.map(item => item.content));
     };
     fetchTips();
-  }, [workerName, router]);
+  }, [queryWorker, router]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -108,7 +122,10 @@ function DashboardContent() {
     return () => { if (interval) clearInterval(interval); };
   }, [isEditing, currentReportId, report]);
 
+  // ★ 새로고침 시 데이터 영구 보존 및 계정 동기화 로직
   useEffect(() => {
+    if (!workerName || workerName === '작업자') return;
+
     const loadData = async () => {
       try {
         const savedFiles = await localforage.getItem<File[]>('pending_photos');
@@ -117,20 +134,22 @@ function DashboardContent() {
           setPreviewUrls(savedFiles.map(file => URL.createObjectURL(file))); 
         }
 
-        let { data: workerData, error: workerErr } = await supabase
+        // 1. 서버에서 작업자 정보 조회
+        let { data: workerData } = await supabase
           .from('workers')
           .select('*')
           .eq('worker_name', workerName)
           .maybeSingle();
 
+        // 2. 계정이 없으면 자동 생성 후 데이터 확보
         if (!workerData) {
-          const { data: newWorker, error: createError } = await supabase
+          const { data: newWorker } = await supabase
             .from('workers')
             .insert([{ worker_name: workerName, exp: 0, level: 1, password: '1234' }])
             .select()
             .single();
             
-          if (!createError) {
+          if (newWorker) {
             workerData = newWorker;
           }
         }
@@ -140,6 +159,7 @@ function DashboardContent() {
           setLevel(workerData.level || 1);
           setExp(workerData.exp || 0);
 
+          // 3. 해당 작업자의 과거 보고서 전체 불러오기
           const { data: reportsData } = await supabase
             .from('inspections')
             .select('*')
@@ -153,16 +173,12 @@ function DashboardContent() {
       } catch (err) {
         console.error('데이터 로딩 중 예외 발생:', err);
       } finally {
-        // ★ 성공하든 실패하든 무조건 로딩 해제 (무한 로딩 차단)
         setIsDataLoaded(true);
       }
     };
 
-    if (workerName && ALLOWED_WORKERS.includes(workerName)) {
-      loadData();
-    }
+    loadData();
 
-    // ★ 안전장치: DB 응답이 3초 이상 지연되면 강제로 로딩 화면을 풀고 대시보드를 띄움
     const timer = setTimeout(() => {
       setIsDataLoaded(true);
     }, 3000);
