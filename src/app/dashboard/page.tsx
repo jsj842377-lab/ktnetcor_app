@@ -207,43 +207,42 @@ function DashboardContent() {
     }
   };
 
-  // ★ 새 보고서 캡처 (기존 유지)
+  // ★ 에러 픽스: margin 값을 배열([10,10,10,10])에서 단일 숫자(10)로 통일
   const handleCapturePDF = async () => {
     const element = reportRef.current;
     if (!element) return;
     const html2pdf = (await import('html2pdf.js')).default;
     const opt = {
-      margin: [10, 10, 10, 10],
+      margin: 10,
       filename: `안전점검보고서_${new Date().getTime()}.pdf`,
       image: { type: 'jpeg' as const, quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true, backgroundColor: isDarkMode ? '#1e293b' : '#ffffff' },
       jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
-      pagebreak: { mode: 'css' } // ★ 사진 반갈림 방지
+      pagebreak: { mode: 'css' }
     };
     html2pdf().set(opt).from(element).save();
   };
 
-  // ★ 과거 보고서 전용 원본 캡처 (다운로드)
+  // ★ 에러 픽스: margin 값을 배열([15,15,15,15])에서 단일 숫자(15)로 통일
   const handleDownloadPastPDF = async (item: any) => {
     setPrintItem(item);
     
-    // 사진이 완벽하게 로딩될 수 있도록 1.5초(1500ms) 대기 후 캡처 실행
     setTimeout(async () => {
       const element = document.getElementById('past-report-pdf');
       if (!element) return;
       
       const html2pdf = (await import('html2pdf.js')).default;
       const opt = {
-        margin: [15, 15, 15, 15], // 상하좌우 여백
+        margin: 15, 
         filename: `안전기록_${new Date(item.created_at).getTime()}.pdf`,
         image: { type: 'jpeg' as const, quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' }, // 과거기록 인쇄 포맷은 흰색 바탕 고정
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
         jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
-        pagebreak: { mode: 'css' } // ★ 사진이 페이지 경계에서 잘리지 않도록 보호
+        pagebreak: { mode: 'css' } 
       };
 
       html2pdf().set(opt).from(element).save().then(() => {
-        setPrintItem(null); // 다운로드 완료 후 숨김 처리
+        setPrintItem(null);
       });
     }, 1500); 
   };
@@ -340,7 +339,6 @@ function DashboardContent() {
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes fadeInOut { 0% { opacity: 0; transform: translateY(10px); } 20% { opacity: 1; transform: translateY(0); } 80% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-10px); } }
         
-        /* ★ PDF 변환 시 사진 반갈림을 완벽히 방지하는 CSS 클래스 */
         .avoid-break { page-break-inside: avoid !important; break-inside: avoid !important; }
         
         @media print { 
@@ -453,7 +451,6 @@ function DashboardContent() {
                 {previewUrls.length > 0 && (
                   <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                     <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '20px 0 10px 0', color: theme.textMain }}>📸 현장 사진 (첨부)</h4>
-                    {/* ★ 신규 보고서 사진 찢어짐 방지 */}
                     {previewUrls.map((url, i) => (<img key={i} src={url} alt="첨부사진" className="avoid-break" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '8px', border: `1px solid ${theme.border}` }} />))}
                   </div>
                 )}
@@ -498,7 +495,6 @@ function DashboardContent() {
                   )}
                   
                   <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                    {/* ★ 인쇄 버튼 및 다운로드 버튼 분리 */}
                     <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 1500); }} style={{ flex: 1, padding: '14px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>인쇄</button>
                     <button onClick={() => handleDownloadPastPDF(item)} style={{ flex: 1, padding: '14px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>PDF 다운로드</button>
                   </div>
@@ -516,7 +512,6 @@ function DashboardContent() {
             <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
               <h4 style={{ width: '100%', borderBottom: `1px solid #cbd5e1`, paddingBottom: '8px', margin: '20px 0 10px 0', color: 'black' }}>📸 현장 사진 (첨부)</h4>
               {printItem.image_url.split(',').map((u: string, i: number) => (
-                // ★ 핵심: CORS 우회(crossOrigin="anonymous") 속성 및 반갈림 방지(avoid-break) 클래스 적용
                 <img key={i} src={u} crossOrigin="anonymous" alt="첨부사진" className="avoid-break" style={{ width: '48%', maxHeight: '400px', objectFit: 'contain', borderRadius: '8px', border: `1px solid #cbd5e1` }} />
               ))}
             </div>
