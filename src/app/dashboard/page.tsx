@@ -207,20 +207,45 @@ function DashboardContent() {
     }
   };
 
+  // ★ 새 보고서 캡처 (기존 유지)
   const handleCapturePDF = async () => {
     const element = reportRef.current;
     if (!element) return;
-    
     const html2pdf = (await import('html2pdf.js')).default;
     const opt = {
-      margin: 10,
+      margin: [10, 10, 10, 10],
       filename: `안전점검보고서_${new Date().getTime()}.pdf`,
       image: { type: 'jpeg' as const, quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true, backgroundColor: isDarkMode ? '#1e293b' : '#ffffff' },
-      jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
+      jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
+      pagebreak: { mode: 'css' } // ★ 사진 반갈림 방지
     };
-
     html2pdf().set(opt).from(element).save();
+  };
+
+  // ★ 과거 보고서 전용 원본 캡처 (다운로드)
+  const handleDownloadPastPDF = async (item: any) => {
+    setPrintItem(item);
+    
+    // 사진이 완벽하게 로딩될 수 있도록 1.5초(1500ms) 대기 후 캡처 실행
+    setTimeout(async () => {
+      const element = document.getElementById('past-report-pdf');
+      if (!element) return;
+      
+      const html2pdf = (await import('html2pdf.js')).default;
+      const opt = {
+        margin: [15, 15, 15, 15], // 상하좌우 여백
+        filename: `안전기록_${new Date(item.created_at).getTime()}.pdf`,
+        image: { type: 'jpeg' as const, quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' }, // 과거기록 인쇄 포맷은 흰색 바탕 고정
+        jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
+        pagebreak: { mode: 'css' } // ★ 사진이 페이지 경계에서 잘리지 않도록 보호
+      };
+
+      html2pdf().set(opt).from(element).save().then(() => {
+        setPrintItem(null); // 다운로드 완료 후 숨김 처리
+      });
+    }, 1500); 
   };
 
   const toggleGender = () => { const newGender = gender === 'M' ? 'F' : 'M'; setGender(newGender); localStorage.setItem(`kt_gender_${workerName}`, newGender); };
@@ -259,7 +284,6 @@ function DashboardContent() {
       }
       const imageUrlsString = uploadedUrls.join(',');
 
-      // ★ 사진 촬영(수정) 날짜를 추출하여 AI에게 전송 (마크다운 표의 '점검일자'에 기록됨)
       const rawDate = new Date(files[0].lastModified); 
       const photoDateStr = `${rawDate.getFullYear()}년 ${rawDate.getMonth() + 1}월 ${rawDate.getDate()}일`;
       
@@ -315,12 +339,15 @@ function DashboardContent() {
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes fadeInOut { 0% { opacity: 0; transform: translateY(10px); } 20% { opacity: 1; transform: translateY(0); } 80% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-10px); } }
+        
+        /* ★ PDF 변환 시 사진 반갈림을 완벽히 방지하는 CSS 클래스 */
+        .avoid-break { page-break-inside: avoid !important; break-inside: avoid !important; }
+        
         @media print { 
           body, .print-target, .print-target * { font-family: 'Pretendard', sans-serif !important; visibility: visible; color: #000 !important; background-color: #fff !important; border-color: #000 !important; } 
           body * { visibility: hidden; } 
           .print-target { position: absolute; left: 0; top: 0; width: 100%; } 
           .no-print { display: none !important; } 
-          img { page-break-inside: avoid; max-width: 100% !important; border: none !important; } 
         }
       `}} />
 
@@ -426,7 +453,8 @@ function DashboardContent() {
                 {previewUrls.length > 0 && (
                   <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                     <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '20px 0 10px 0', color: theme.textMain }}>📸 현장 사진 (첨부)</h4>
-                    {previewUrls.map((url, i) => (<img key={i} src={url} alt="첨부사진" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '8px', border: `1px solid ${theme.border}` }} />))}
+                    {/* ★ 신규 보고서 사진 찢어짐 방지 */}
+                    {previewUrls.map((url, i) => (<img key={i} src={url} alt="첨부사진" className="avoid-break" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '8px', border: `1px solid ${theme.border}` }} />))}
                   </div>
                 )}
               </div>
@@ -454,12 +482,10 @@ function DashboardContent() {
                     <span style={{ color: theme.textSub, fontSize: '13px' }}>저장일시: {new Date(item.created_at).toLocaleString()}</span>
                   </div>
                   
-                  {/* ★ 보고서 양식 원본 크기 100% 유지 (스크롤 제거) */}
                   <div style={{ background: theme.bg, padding: '16px', borderRadius: '8px' }}>
                     <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown>
                   </div>
                   
-                  {/* ★ 하단에 다중 사진 크고 깔끔하게 렌더링 */}
                   {savedUrls.length > 0 && (
                     <div style={{ marginTop: '20px' }}>
                       <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '0 0 16px 0', color: theme.textMain }}>📸 첨부된 현장 사진</h4>
@@ -471,7 +497,11 @@ function DashboardContent() {
                     </div>
                   )}
                   
-                  <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 600); }} style={{ width: '100%', marginTop: '20px', padding: '14px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>이 보고서 인쇄하기</button>
+                  <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                    {/* ★ 인쇄 버튼 및 다운로드 버튼 분리 */}
+                    <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 1500); }} style={{ flex: 1, padding: '14px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>인쇄</button>
+                    <button onClick={() => handleDownloadPastPDF(item)} style={{ flex: 1, padding: '14px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>PDF 다운로드</button>
+                  </div>
                 </div>
               );
             })}
@@ -480,13 +510,14 @@ function DashboardContent() {
       </div>
 
       {printItem && (
-        <div className="print-target" style={{ padding: '20px', background: 'white', color: 'black' }}>
+        <div id="past-report-pdf" className="print-target" style={{ padding: '20px', background: 'white', color: 'black' }}>
           <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown>
           {printItem.image_url && (
             <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
               <h4 style={{ width: '100%', borderBottom: `1px solid #cbd5e1`, paddingBottom: '8px', margin: '20px 0 10px 0', color: 'black' }}>📸 현장 사진 (첨부)</h4>
               {printItem.image_url.split(',').map((u: string, i: number) => (
-                <img key={i} src={u} alt="첨부사진" style={{ width: '48%', maxHeight: '400px', objectFit: 'contain', borderRadius: '8px', border: `1px solid #cbd5e1` }} />
+                // ★ 핵심: CORS 우회(crossOrigin="anonymous") 속성 및 반갈림 방지(avoid-break) 클래스 적용
+                <img key={i} src={u} crossOrigin="anonymous" alt="첨부사진" className="avoid-break" style={{ width: '48%', maxHeight: '400px', objectFit: 'contain', borderRadius: '8px', border: `1px solid #cbd5e1` }} />
               ))}
             </div>
           )}
