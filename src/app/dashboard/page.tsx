@@ -26,6 +26,9 @@ function DashboardContent() {
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [analyzing, setAnalyzing] = useState<boolean>(false);
   
+  // ★ 데이터 로딩 상태 추가 (새로고침 시 데이터 증발 방지용)
+  const [isDataLoaded, setIsDataLoaded] = useState<boolean>(false);
+  
   const [gender, setGender] = useState<'M'|'F'>('M');
   const [dbTips, setDbTips] = useState<string[]>(['안전이 최우선입니다.']);
   const [loadingTip, setLoadingTip] = useState<string>('');
@@ -106,23 +109,21 @@ function DashboardContent() {
     return () => { if (interval) clearInterval(interval); };
   }, [isEditing, currentReportId, report]);
 
-  // ★ 작업자 계정 조회 및 자동 생성 로직 (maybeSingle 적용으로 에러 차단)
+  // ★ 새로고침 시 데이터를 완벽하게 불러오도록 비동기 처리 및 로딩 제어 강화
   useEffect(() => {
-    const loadPendingPhotos = async () => {
+    const loadData = async () => {
       const savedFiles = await localforage.getItem<File[]>('pending_photos');
-      if (savedFiles && savedFiles.length > 0) { setFiles(savedFiles); setPreviewUrls(savedFiles.map(file => URL.createObjectURL(file))); }
-    };
-    
-    const fetchWorkerData = async () => {
+      if (savedFiles && savedFiles.length > 0) { 
+        setFiles(savedFiles); 
+        setPreviewUrls(savedFiles.map(file => URL.createObjectURL(file))); 
+      }
+
+      // 1. 작업자 정보 조회
       let { data: workerData, error: workerErr } = await supabase
         .from('workers')
         .select('*')
         .eq('worker_name', workerName)
-        .maybeSingle(); // 0개여도 에러 없이 null 반환
-      
-      if (workerErr) {
-        console.error('작업자 조회 에러:', workerErr.message);
-      }
+        .maybeSingle();
 
       if (!workerData) {
         const { data: newWorker, error: createError } = await supabase
@@ -132,10 +133,10 @@ function DashboardContent() {
           .single();
           
         if (createError) {
-          alert(`계정 생성 실패: ${createError.message}`);
-          return;
+          console.error('계정 생성 실패:', createError.message);
+        } else {
+          workerData = newWorker;
         }
-        workerData = newWorker;
       }
 
       if (workerData) {
@@ -143,7 +144,8 @@ function DashboardContent() {
         setLevel(workerData.level || 1);
         setExp(workerData.exp || 0);
 
-        const { data: reportsData } = await supabase
+        // 2. 해당 작업자의 과거 보고서 전체 조회
+        const { data: reportsData, error: reportErr } = await supabase
           .from('inspections')
           .select('*')
           .eq('worker_id', workerData.id)
@@ -153,10 +155,14 @@ function DashboardContent() {
           setPastReports(reportsData);
         }
       }
+
+      // 데이터 로딩 완료 표시
+      setIsDataLoaded(true);
     };
 
-    loadPendingPhotos();
-    if (workerName && ALLOWED_WORKERS.includes(workerName)) fetchWorkerData();
+    if (workerName && ALLOWED_WORKERS.includes(workerName)) {
+      loadData();
+    }
   }, [workerName]);
 
   const parseMarkdownToForm = (mdText: string) => {
@@ -277,11 +283,9 @@ function DashboardContent() {
     setFiles(newFiles); setPreviewUrls(newFiles.map(f => URL.createObjectURL(f)));
   };
   
-  // ★ 사진 분석 및 DB 저장 로직 (안전장치 추가)
   const handleUploadAndAnalyze = async () => {
     if (files.length === 0) return alert('사진을 추가해주세요!');
     
-    // 만약 workerId가 아직 안 잡혔다면 현재 이름으로 즉시 생성 시도
     let currentWorkerId = workerId;
     if (!currentWorkerId) {
       const { data: tempWorker } = await supabase.from('workers').select('id').eq('worker_name', workerName).maybeSingle();
@@ -333,14 +337,11 @@ function DashboardContent() {
       setFiles([]); 
       setReport(resData.report);
       
-      // ★ inspections 테이블에 확실하게 저장
       const { data: insertedData, error: dbError } = await supabase.from('inspections').insert([
         { worker_id: currentWorkerId, image_url: imageUrlsString, ai_report_text: resData.report, status: '완료' }
       ]).select().single();
       
-      if (dbError) {
-        throw new Error(`DB 저장 실패: ${dbError.message}`);
-      }
+      if (dbError) throw new Error(`DB 저장 실패: ${dbError.message}`);
 
       if (insertedData) { 
         setCurrentReportId(insertedData.id); 
@@ -380,6 +381,11 @@ function DashboardContent() {
     h4: (props: any) => <div style={{ textAlign: 'center', fontSize: '16px', fontWeight: 'bold', margin: '20px 0 10px 0', color: theme.textMain }} {...props} />,
     ul: (props: any) => <ul style={{ paddingLeft: '20px', margin: '8px 0', color: theme.textMain }} {...props} />,
   };
+
+  // ★ 데이터가 로딩되기 전에는 빈 화면 대신 로딩 문구를 띄워 새로고침 시 깜빡임이나 데이터 증발 차단
+  if (!isDataLoaded) {
+    return <div style={{ padding: '60px', textAlign: 'center', fontFamily: "'Pretendard', sans-serif" }}>기록을 안전하게 불러오는 중입니다...</div>;
+  }
 
   return (
     <div style={{ maxWidth: '640px', margin: '0 auto', padding: '16px', fontFamily: "'Pretendard', sans-serif" }}>
