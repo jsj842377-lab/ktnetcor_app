@@ -38,6 +38,9 @@ function DashboardContent() {
   const [currentReportId, setCurrentReportId] = useState<string | null>(null);
   const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
   
+  // ★ 아코디언 UI 관리를 위한 상태 (열려있는 보고서 ID)
+  const [expandedReportId, setExpandedReportId] = useState<string | null>(null);
+
   const [editForm, setEditForm] = useState([
     { name: '보호구 착용 상태', result: '', action: '', note: '' },
     { name: '안전표지 설치', result: '', action: '', note: '' },
@@ -67,16 +70,10 @@ function DashboardContent() {
   };
 
   useEffect(() => {
-    // 1. 유령 계정 강제 추방 로직 (다른 브라우저 접속 버그 차단)
-    let current = queryWorker;
-    if (!current) {
-      current = localStorage.getItem('kt_current_worker');
-    }
-
-    if (!current || current === '작업자') {
-      alert('로그인 세션이 만료되었거나 정보가 없습니다. 다시 로그인해주세요.');
-      router.push('/');
-      return;
+    let current = queryWorker || workerName;
+    if (queryWorker && ALLOWED_WORKERS.includes(queryWorker)) {
+      setWorkerName(queryWorker);
+      current = queryWorker;
     }
 
     if (!ALLOWED_WORKERS.includes(current)) {
@@ -84,9 +81,6 @@ function DashboardContent() {
       router.push('/'); 
       return;
     }
-
-    setWorkerName(current);
-    localStorage.setItem('kt_current_worker', current);
 
     const savedGender = localStorage.getItem(`kt_gender_${current}`);
     if (savedGender === 'F') setGender('F');
@@ -96,7 +90,7 @@ function DashboardContent() {
       if (data && data.length > 0) setDbTips(data.map(item => item.content));
     };
     fetchTips();
-  }, [queryWorker, router, setWorkerName]);
+  }, [queryWorker, router, workerName, setWorkerName]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -123,7 +117,6 @@ function DashboardContent() {
     return () => { if (interval) clearInterval(interval); };
   }, [isEditing, currentReportId, report]);
 
-  // ★ 정상 계정 DB 동기화
   useEffect(() => {
     if (!workerName || workerName === '작업자') return;
 
@@ -135,15 +128,11 @@ function DashboardContent() {
           setPreviewUrls(savedFiles.map(file => URL.createObjectURL(file))); 
         }
 
-        // 중복 생성된 행이 있을 경우를 대비해 가장 최근 계정 1개만 안전하게 조회
-        const { data: workersList } = await supabase
+        let { data: workerData } = await supabase
           .from('workers')
           .select('*')
           .eq('worker_name', workerName)
-          .order('created_at', { ascending: false })
-          .limit(1);
-
-        let workerData = workersList?.[0];
+          .maybeSingle();
 
         if (!workerData) {
           const { data: newWorker } = await supabase
@@ -178,26 +167,6 @@ function DashboardContent() {
     const timer = setTimeout(() => setIsDataLoaded(true), 3000);
     return () => clearTimeout(timer);
   }, [workerName, setExpAndLevel]);
-
-  // 실시간 동기화 (기존 로직 유지)
-  useEffect(() => {
-    if (!workerId) return;
-
-    const channel = supabase
-      .channel('realtime-inspections')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'inspections', filter: `worker_id=eq.${workerId}` },
-        (payload) => {
-          if (payload.eventType === 'INSERT') setPastReports((prev) => [payload.new, ...prev]);
-          else if (payload.eventType === 'UPDATE') setPastReports((prev) => prev.map((item) => (item.id === payload.new.id ? payload.new : item)));
-          else if (payload.eventType === 'DELETE') setPastReports((prev) => prev.filter((item) => item.id !== payload.old.id));
-        }
-      )
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, [workerId]);
 
   const parseMarkdownToForm = (mdText: string) => {
     const newForm = [...editForm];
@@ -327,14 +296,20 @@ function DashboardContent() {
     
     let currentWorkerId = workerId;
     if (!currentWorkerId) {
-      const { data: tempWorker } = await supabase.from('workers').select('id').eq('worker_name', workerName).order('created_at', { ascending: false }).limit(1).single();
+      const { data: tempWorker } = await supabase.from('workers').select('id').eq('worker_name', workerName).maybeSingle();
       if (tempWorker) {
         currentWorkerId = tempWorker.id;
         setWorkerId(tempWorker.id);
+      } else {
+        const { data: newW } = await supabase.from('workers').insert([{ worker_name: workerName, exp: 0, level: 1, password: '1234' }]).select().single();
+        if (newW) {
+          currentWorkerId = newW.id;
+          setWorkerId(newW.id);
+        }
       }
     }
 
-    if (!currentWorkerId) return alert('작업자 계정 연동 중 오류 발생. 새로고침 후 다시 시도해주세요.');
+    if (!currentWorkerId) return alert('작업자 계정 연동 중 오류 발생');
 
     setAnalyzing(true); setReport(null); setIsEditing(false);
     try {
@@ -555,35 +530,56 @@ function DashboardContent() {
       <div className="no-print" style={{ marginTop: '30px' }}>
         <button onClick={() => setShowPast(!showPast)} style={{ width: '100%', padding: '16px', background: theme.cardBg, border: `1px solid ${theme.border}`, color: theme.textMain, borderRadius: '0', cursor: 'pointer' }}>과거 기록 보기 ({pastReports.length}건)</button>
         {showPast && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '16px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
+            {/* ★ 한눈에 보기(아코디언) UI 적용 파트 */}
             {pastReports.map((item, i) => {
+              const isExpanded = expandedReportId === item.id;
+              const hasDanger = item.ai_report_text?.includes('불량');
               const savedUrls = item.image_url ? item.image_url.split(',') : [];
+              const reportDate = new Date(item.created_at).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
+
               return (
-                <div key={i} style={{ padding: '24px', background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '0' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: `1px solid ${theme.border}`, paddingBottom: '12px' }}>
-                    <h4 style={{ margin: 0, color: '#2563eb', fontSize: '16px' }}>📄 점검 보고서</h4>
-                    <span style={{ color: theme.textSub, fontSize: '13px' }}>저장일시: {new Date(item.created_at).toLocaleString()}</span>
+                <div key={item.id} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '0', overflow: 'hidden' }}>
+                  {/* 요약 헤더 (클릭 시 토글) */}
+                  <div 
+                    onClick={() => setExpandedReportId(isExpanded ? null : item.id)}
+                    style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', background: isExpanded ? theme.mdTableHead : 'transparent' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <strong style={{ color: theme.textMain, fontSize: '15px' }}>{reportDate} 점검</strong>
+                      <span style={{ padding: '4px 8px', fontSize: '11px', background: hasDanger ? '#ef4444' : '#10b981', color: 'white', borderRadius: '4px', fontWeight: 'bold' }}>
+                        {hasDanger ? '⚠️ 위험요소 검출' : '✅ 전체 양호'}
+                      </span>
+                    </div>
+                    <span style={{ color: theme.textSub, fontSize: '13px', fontWeight: 'bold' }}>
+                      {isExpanded ? '▲ 접기' : '▼ 펼치기'}
+                    </span>
                   </div>
-                  
-                  <div style={{ background: theme.bg, padding: '16px', borderRadius: '0' }}>
-                    <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown>
-                  </div>
-                  
-                  {savedUrls.length > 0 && (
-                    <div style={{ marginTop: '20px' }}>
-                      <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '0 0 16px 0', color: theme.textMain }}>📸 첨부된 현장 사진</h4>
-                      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                        {savedUrls.map((u: string, idx: number) => (
-                          <img key={idx} src={u} alt="사진" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '0', border: `1px solid ${theme.border}` }} />
-                        ))}
+
+                  {/* 펼쳐지는 상세 내용 영역 */}
+                  {isExpanded && (
+                    <div style={{ padding: '24px', borderTop: `1px solid ${theme.border}` }}>
+                      <div style={{ background: theme.bg, padding: '16px', borderRadius: '0' }}>
+                        <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown>
+                      </div>
+                      
+                      {savedUrls.length > 0 && (
+                        <div style={{ marginTop: '20px' }}>
+                          <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '0 0 16px 0', color: theme.textMain }}>📸 첨부된 현장 사진</h4>
+                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                            {savedUrls.map((u: string, idx: number) => (
+                              <img key={idx} src={u} alt="사진" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '0', border: `1px solid ${theme.border}` }} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                        <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 1500); }} style={{ flex: 1, padding: '14px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>인쇄</button>
+                        <button onClick={() => handleDownloadPastPDF(item)} style={{ flex: 1, padding: '14px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>PDF 다운로드</button>
                       </div>
                     </div>
                   )}
-                  
-                  <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                    <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 1500); }} style={{ flex: 1, padding: '14px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>인쇄</button>
-                    <button onClick={() => handleDownloadPastPDF(item)} style={{ flex: 1, padding: '14px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>PDF 다운로드</button>
-                  </div>
                 </div>
               );
             })}
