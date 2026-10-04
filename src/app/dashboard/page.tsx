@@ -41,24 +41,25 @@ function DashboardContent() {
   const [pastReports, setPastReports] = useState<any[]>([]);
   const [showPast, setShowPast] = useState<boolean>(false);
   const [showLevelUpModal, setShowLevelUpModal] = useState<boolean>(false);
+  
+  // 비밀번호 설정 모달창 관련 상태
+  const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
+  const [oldPwd, setOldPwd] = useState('');
+  const [newPwd, setNewPwd] = useState('');
+
   const [printItem, setPrintItem] = useState<any>(null);
   const reportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!ALLOWED_WORKERS.includes(workerName)) {
-      alert('경기설계팀 소속 팀원만 접근할 수 있습니다. 등록된 이름을 확인해주세요.');
-      router.push('/');
-      return;
+      alert('접근 권한이 없습니다.'); router.push('/'); return;
     }
-
     const savedGender = localStorage.getItem(`kt_gender_${workerName}`);
     if (savedGender === 'F') setGender('F');
 
     const fetchTips = async () => {
       const { data } = await supabase.from('safety_tips').select('content').eq('is_active', true);
-      if (data && data.length > 0) {
-        setDbTips(data.map(item => item.content));
-      }
+      if (data && data.length > 0) setDbTips(data.map(item => item.content));
     };
     fetchTips();
   }, [workerName, router]);
@@ -67,9 +68,7 @@ function DashboardContent() {
     let interval: NodeJS.Timeout;
     if (analyzing) {
       setLoadingTip(dbTips[Math.floor(Math.random() * dbTips.length)]);
-      interval = setInterval(() => {
-        setLoadingTip(dbTips[Math.floor(Math.random() * dbTips.length)]);
-      }, 2000);
+      interval = setInterval(() => setLoadingTip(dbTips[Math.floor(Math.random() * dbTips.length)]), 2000);
     }
     return () => { if (interval) clearInterval(interval); };
   }, [analyzing, dbTips]);
@@ -78,170 +77,102 @@ function DashboardContent() {
     const loadPendingPhotos = async () => {
       const savedFiles = await localforage.getItem<File[]>('pending_photos');
       if (savedFiles && savedFiles.length > 0) {
-        setFiles(savedFiles);
-        setPreviewUrls(savedFiles.map(file => URL.createObjectURL(file)));
+        setFiles(savedFiles); setPreviewUrls(savedFiles.map(file => URL.createObjectURL(file)));
       }
     };
-
     const fetchWorkerData = async () => {
       let { data: workerData } = await supabase.from('workers').select('*').eq('worker_name', workerName).order('created_at', { ascending: false }).limit(1).single();
-
-      if (!workerData) {
-        const { data: newWorker } = await supabase.from('workers').insert([{ worker_name: workerName, level: 1, exp: 0 }]).select().single();
-        workerData = newWorker;
-      }
-
       if (workerData) {
         const { data: reportsData } = await supabase.from('inspections').select('*').eq('worker_id', workerData.id).order('created_at', { ascending: false });
-
         let lastActiveDate = new Date(workerData.created_at);
         if (reportsData && reportsData.length > 0) {
           const lastReportDate = new Date(reportsData[0].created_at);
           if (lastReportDate > lastActiveDate) lastActiveDate = lastReportDate;
         }
-
-        const lastActiveYear = lastActiveDate.getFullYear();
-        const lastActiveQuarter = Math.floor(lastActiveDate.getMonth() / 3) + 1;
-
+        const lastActiveYear = lastActiveDate.getFullYear(); const lastActiveQuarter = Math.floor(lastActiveDate.getMonth() / 3) + 1;
         if (currentYear > lastActiveYear || (currentYear === lastActiveYear && currentQuarter > lastActiveQuarter)) {
           if (workerData.exp > 0 || workerData.level > 1) {
-            workerData.exp = 0;
-            workerData.level = 1;
+            workerData.exp = 0; workerData.level = 1;
             await supabase.from('workers').update({ exp: 0, level: 1 }).eq('id', workerData.id);
             alert(`🎉 새로운 시즌(${currentYear}년 ${currentQuarter}분기) 시작! 레벨 초기화`);
           }
         }
-
-        setWorkerId(workerData.id);
-        setLevel(workerData.level);
-        setExp(workerData.exp);
+        setWorkerId(workerData.id); setLevel(workerData.level); setExp(workerData.exp);
         if (reportsData) setPastReports(reportsData);
       }
     };
-    
     loadPendingPhotos();
     if (workerName && ALLOWED_WORKERS.includes(workerName)) fetchWorkerData();
   }, [workerName, currentYear, currentQuarter]);
 
   const toggleGender = () => {
     const newGender = gender === 'M' ? 'F' : 'M';
-    setGender(newGender);
-    localStorage.setItem(`kt_gender_${workerName}`, newGender);
+    setGender(newGender); localStorage.setItem(`kt_gender_${workerName}`, newGender);
   };
-
   const getCharacterEmoji = () => {
-    if (level === 1) return '🐣';
-    if (level < 3) return gender === 'M' ? '👦' : '👧';
+    if (level === 1) return '🐣'; if (level < 3) return gender === 'M' ? '👦' : '👧';
     return gender === 'M' ? '👨‍🔧' : '👩‍🔧';
   };
 
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!oldPwd || !newPwd) return alert('모두 입력해주세요.');
+    const { data } = await supabase.from('workers').select('password').eq('id', workerId).single();
+    if (data?.password !== oldPwd) return alert('현재 비밀번호가 일치하지 않습니다.');
+    
+    await supabase.from('workers').update({ password: newPwd }).eq('id', workerId);
+    alert('비밀번호가 성공적으로 변경되었습니다.');
+    setShowSettingsModal(false); setOldPwd(''); setNewPwd('');
+  };
+
   const handleLogout = () => {
-    if(window.confirm('정말 로그아웃 하시겠습니까?')) {
-      router.push('/');
-    }
+    if(window.confirm('정말 로그아웃 하시겠습니까?')) router.push('/');
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const newFiles = Array.from(e.target.files);
-      const compressedFiles = await Promise.all(
-        newFiles.map(async (file) => {
-          const options = { maxSizeMB: 0.3, maxWidthOrHeight: 1024, initialQuality: 0.7, useWebWorker: true };
-          try { return await imageCompression(file, options); } 
-          catch (error) { return file; }
-        })
-      );
+      const compressedFiles = await Promise.all(newFiles.map(async (file) => {
+        try { return await imageCompression(file, { maxSizeMB: 0.3, maxWidthOrHeight: 1024, initialQuality: 0.7, useWebWorker: true }); } catch { return file; }
+      }));
       const currentSaved = await localforage.getItem<File[]>('pending_photos') || [];
       const newTotalFiles = [...currentSaved, ...compressedFiles];
-      
       await localforage.setItem('pending_photos', newTotalFiles);
-      setFiles(newTotalFiles);
-      setPreviewUrls(newTotalFiles.map(file => URL.createObjectURL(file)));
-      setReport(null);
-      setIsEditing(false);
+      setFiles(newTotalFiles); setPreviewUrls(newTotalFiles.map(f => URL.createObjectURL(f))); setReport(null); setIsEditing(false);
     }
   };
 
   const removeFile = async (idxToRemove: number) => {
     const newFiles = files.filter((_, idx) => idx !== idxToRemove);
-    await localforage.setItem('pending_photos', newFiles);
-    setFiles(newFiles);
-    setPreviewUrls(newFiles.map(file => URL.createObjectURL(file)));
+    await localforage.setItem('pending_photos', newFiles); setFiles(newFiles); setPreviewUrls(newFiles.map(f => URL.createObjectURL(f)));
   };
 
-  const handleUploadAndAnalyze = async () => {
+  const handleUploadAndAnalyze = async () => { /* AI 백엔드 통신 및 EXP 증가 로직(기존 동일) */
     if (files.length === 0) return alert('사진을 추가해주세요!');
-    setAnalyzing(true);
-    setReport(null);
-    setIsEditing(false);
-
+    setAnalyzing(true); setReport(null); setIsEditing(false);
     try {
-      const firstFile = files[0];
-      const rawDate = new Date(firstFile.lastModified);
-      const photoDateStr = `${rawDate.getFullYear()}년 ${rawDate.getMonth() + 1}월 ${rawDate.getDate()}일`;
+      const firstFile = files[0]; const rawDate = new Date(firstFile.lastModified); const photoDateStr = `${rawDate.getFullYear()}년 ${rawDate.getMonth() + 1}월 ${rawDate.getDate()}일`;
       const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${firstFile.name.split('.').pop()}`;
-      
       const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, firstFile);
-      if (uploadError) console.warn('업로드 실패:', uploadError.message);
+      const { data: publicUrlData } = supabase.storage.from('inspections').getPublicUrl(fileName); const imageUrl = publicUrlData?.publicUrl || '';
       
-      const { data: publicUrlData } = supabase.storage.from('inspections').getPublicUrl(fileName);
-      const imageUrl = publicUrlData?.publicUrl || '';
-
-      const formData = new FormData();
-      files.forEach(f => formData.append('images', f));
-      formData.append('photoDate', photoDateStr);
-      formData.append('projectNumber', projectNumberInput);
-      formData.append('workType', workTypeInput);
-      formData.append('workDesc', workDescInput);
-      formData.append('inspector', workerName); 
-
-      const res = await fetch('/api/analyze', { method: 'POST', body: formData });
-      const resData = await res.json();
+      const formData = new FormData(); files.forEach(f => formData.append('images', f)); formData.append('photoDate', photoDateStr); formData.append('projectNumber', projectNumberInput); formData.append('workType', workTypeInput); formData.append('workDesc', workDescInput); formData.append('inspector', workerName); 
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData }); const resData = await res.json();
       if (!res.ok) throw new Error(resData.error || '분석 실패');
 
-      await localforage.removeItem('pending_photos');
-      setFiles([]);
-      setReport(resData.report);
-
+      await localforage.removeItem('pending_photos'); setFiles([]); setReport(resData.report);
       if (workerId) {
-        const { data: insertedData } = await supabase.from('inspections').insert([
-          { worker_id: workerId, image_url: imageUrl, ai_report_text: resData.report, status: '완료' }
-        ]).select().single();
-
-        if (insertedData) {
-          setCurrentReportId(insertedData.id);
-          setPastReports(prev => [insertedData, ...prev]);
-        }
-        
-        const hasDanger = resData.report.includes('불량');
-        if (hasDanger) alert('⚠️ 위험 요소 발견! 보너스 10 EXP 추가 지급');
-        
+        const { data: insertedData } = await supabase.from('inspections').insert([{ worker_id: workerId, image_url: imageUrl, ai_report_text: resData.report, status: '완료' }]).select().single();
+        if (insertedData) { setCurrentReportId(insertedData.id); setPastReports(prev => [insertedData, ...prev]); }
+        const hasDanger = resData.report.includes('불량'); if (hasDanger) alert('⚠️ 위험 요소 발견! 보너스 10 EXP 추가 지급');
         const gainedExp = (files.length * 5) + (hasDanger ? 10 : 0); 
-        let tempExp = exp + gainedExp;
-        let calcLevel = 1;
-        let reqExp = 100;
-        
-        while (tempExp >= reqExp) {
-          tempExp -= reqExp;
-          calcLevel++;
-          reqExp *= 2; 
-        }
-
-        if (calcLevel > level) {
-          setShowLevelUpModal(true);
-          confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
-          setTimeout(() => setShowLevelUpModal(false), 5000);
-        }
-
-        setExp(exp + gainedExp);
-        setLevel(calcLevel);
+        let tempExp = exp + gainedExp; let calcLevel = 1; let reqExp = 100;
+        while (tempExp >= reqExp) { tempExp -= reqExp; calcLevel++; reqExp *= 2; }
+        if (calcLevel > level) { setShowLevelUpModal(true); confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } }); setTimeout(() => setShowLevelUpModal(false), 5000); }
+        setExp(exp + gainedExp); setLevel(calcLevel);
         await supabase.from('workers').update({ exp: exp + gainedExp, level: calcLevel }).eq('id', workerId);
       }
-    } catch (err: any) {
-      alert(`오류: ${err.message}`);
-    } finally {
-      setAnalyzing(false);
-    }
+    } catch (err: any) { alert(`오류: ${err.message}`); } finally { setAnalyzing(false); }
   };
 
   const handleUpdateReport = async () => {
@@ -250,11 +181,6 @@ function DashboardContent() {
       await supabase.from('inspections').update({ ai_report_text: report }).eq('id', currentReportId);
       setPastReports(prev => prev.map(item => item.id === currentReportId ? { ...item, ai_report_text: report } : item));
     }
-  };
-
-  const handlePrintPast = (item: any) => {
-    setPrintItem(item);
-    setTimeout(() => { window.print(); setPrintItem(null); }, 100);
   };
 
   const mdComps = {
@@ -272,21 +198,27 @@ function DashboardContent() {
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes fadeInOut { 0% { opacity: 0; transform: translateY(10px); } 20% { opacity: 1; transform: translateY(0); } 80% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-10px); } }
-        @media print { 
-          body, .print-target, .print-target * { font-family: 'Pretendard', sans-serif !important; visibility: visible; } 
-          body * { visibility: hidden; } 
-          .print-target { position: absolute; left: 0; top: 0; width: 100%; } 
-          .no-print { display: none !important; } 
-        }
+        @media print { body, .print-target, .print-target * { font-family: 'Pretendard', sans-serif !important; visibility: visible; } body * { visibility: hidden; } .print-target { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } }
       `}} />
+
+      {/* 설정 모달 (비밀번호 변경) */}
+      {showSettingsModal && (
+        <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <form onSubmit={handleChangePassword} style={{ background: 'white', padding: '30px', borderRadius: '16px', width: '90%', maxWidth: '320px', boxSizing: 'border-box' }}>
+            <h3 style={{ margin: '0 0 20px 0', textAlign: 'center' }}>비밀번호 변경</h3>
+            <input type="password" placeholder="현재 비밀번호" value={oldPwd} onChange={e => setOldPwd(e.target.value)} style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+            <input type="password" placeholder="새 비밀번호" value={newPwd} onChange={e => setNewPwd(e.target.value)} style={{ width: '100%', padding: '12px', marginBottom: '20px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button type="button" onClick={() => setShowSettingsModal(false)} style={{ flex: 1, padding: '12px', background: '#e2e8f0', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>취소</button>
+              <button type="submit" style={{ flex: 1, padding: '12px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>저장</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {showLevelUpModal && (
         <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.8)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'white', padding: '40px', borderRadius: '20px', textAlign: 'center' }}>
-            <div style={{ fontSize: '60px' }}>🎉</div>
-            <h2 style={{ color: '#2563eb' }}>레벨 업! Lv.{level}</h2>
-            <button onClick={() => setShowLevelUpModal(false)} style={{ padding: '14px', background: '#2563eb', color: 'white', borderRadius: '12px', border: 'none', width: '100%', cursor: 'pointer' }}>확인</button>
-          </div>
+          <div style={{ background: 'white', padding: '40px', borderRadius: '20px', textAlign: 'center' }}><div style={{ fontSize: '60px' }}>🎉</div><h2 style={{ color: '#2563eb' }}>레벨 업! Lv.{level}</h2><button onClick={() => setShowLevelUpModal(false)} style={{ padding: '14px', background: '#2563eb', color: 'white', borderRadius: '12px', border: 'none', width: '100%' }}>확인</button></div>
         </div>
       )}
 
@@ -294,9 +226,7 @@ function DashboardContent() {
         <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
           <div style={{ width: '60px', height: '60px', border: '5px solid rgba(255,255,255,0.2)', borderTop: '5px solid #3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '24px' }} />
           <h3 style={{ color: '#60a5fa', fontSize: '15px', marginBottom: '16px', fontWeight: 'bold' }}>Vision AI 분석 중...</h3>
-          <div style={{ height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <p key={loadingTip} style={{ color: 'white', fontSize: '20px', fontWeight: 'bold', textAlign: 'center', lineHeight: '1.4', animation: 'fadeInOut 1.5s ease-in-out forwards', margin: 0 }}>"{loadingTip}"</p>
-          </div>
+          <div style={{ height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><p key={loadingTip} style={{ color: 'white', fontSize: '20px', fontWeight: 'bold', textAlign: 'center', animation: 'fadeInOut 1.5s ease-in-out forwards', margin: 0 }}>"{loadingTip}"</p></div>
         </div>
       )}
 
@@ -317,7 +247,12 @@ function DashboardContent() {
             </div>
           </div>
         </div>
-        <button onClick={handleLogout} style={{ padding: '8px', background: '#ef4444', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer' }}>로그아웃</button>
+        
+        {/* 버튼 영역 (설정 & 로그아웃) */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <button onClick={() => setShowSettingsModal(true)} style={{ padding: '6px 8px', background: '#e2e8f0', color: '#1e293b', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>⚙️ 설정</button>
+          <button onClick={handleLogout} style={{ padding: '6px 8px', background: '#ef4444', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '12px' }}>로그아웃</button>
+        </div>
       </div>
 
       <div className="no-print" style={{ background: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '16px' }}>
@@ -329,17 +264,11 @@ function DashboardContent() {
 
       <div className="no-print" style={{ marginBottom: '16px' }}>
         <label style={{ display: 'block', textAlign: 'center', padding: '30px', background: '#fff', border: '2px dashed #94a3b8', borderRadius: '12px', cursor: 'pointer' }}>
-          <div style={{ fontSize: '32px' }}>📸 사진 추가</div>
-          <input type="file" accept="image/*" multiple onChange={handleFileChange} style={{ display: 'none' }} />
+          <div style={{ fontSize: '32px' }}>📸 사진 추가</div><input type="file" accept="image/*" multiple onChange={handleFileChange} style={{ display: 'none' }} />
         </label>
         {previewUrls.length > 0 && (
           <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '10px 0' }}>
-            {previewUrls.map((url, i) => (
-              <div key={i} style={{ position: 'relative' }}>
-                <img src={url} alt="미리보기" style={{ width: '80px', height: '80px', borderRadius: '8px', objectFit: 'cover' }} />
-                <button onClick={() => removeFile(i)} style={{ position: 'absolute', top: 0, right: 0, background: 'black', color: 'white', border: 'none' }}>X</button>
-              </div>
-            ))}
+            {previewUrls.map((url, i) => (<div key={i} style={{ position: 'relative' }}><img src={url} alt="미리보기" style={{ width: '80px', height: '80px', borderRadius: '8px', objectFit: 'cover' }} /><button onClick={() => removeFile(i)} style={{ position: 'absolute', top: 0, right: 0, background: 'black', color: 'white', border: 'none' }}>X</button></div>))}
           </div>
         )}
       </div>
@@ -349,17 +278,11 @@ function DashboardContent() {
       {report && (
         <div className={printItem ? "no-print" : "print-target"} style={{ marginTop: '20px', padding: '20px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
           {isEditing ? (
-            <div className="no-print">
-              <textarea value={report} onChange={e => setReport(e.target.value)} style={{ width: '100%', minHeight: '300px', padding: '10px', boxSizing: 'border-box' }} />
-              <button onClick={handleUpdateReport} style={{ width: '100%', padding: '12px', background: '#3b82f6', color: 'white', marginTop: '10px', border: 'none' }}>저장</button>
-            </div>
+            <div className="no-print"><textarea value={report} onChange={e => setReport(e.target.value)} style={{ width: '100%', minHeight: '300px', padding: '10px', boxSizing: 'border-box' }} /><button onClick={handleUpdateReport} style={{ width: '100%', padding: '12px', background: '#3b82f6', color: 'white', marginTop: '10px', border: 'none' }}>저장</button></div>
           ) : (
             <>
               <div ref={reportRef}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown></div>
-              <div className="no-print" style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                <button onClick={() => setIsEditing(true)} style={{ flex: 1, padding: '12px' }}>수정</button>
-                <button onClick={() => window.print()} style={{ flex: 1, padding: '12px', background: '#10b981', color: 'white', border: 'none' }}>PDF 인쇄</button>
-              </div>
+              <div className="no-print" style={{ display: 'flex', gap: '10px', marginTop: '20px' }}><button onClick={() => setIsEditing(true)} style={{ flex: 1, padding: '12px' }}>수정</button><button onClick={() => window.print()} style={{ flex: 1, padding: '12px', background: '#10b981', color: 'white', border: 'none' }}>PDF 인쇄</button></div>
             </>
           )}
         </div>
@@ -373,10 +296,8 @@ function DashboardContent() {
               <div key={i} style={{ padding: '16px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
                 <div style={{ color: '#2563eb', fontWeight: 'bold', marginBottom: '10px' }}>{new Date(item.created_at).toLocaleString()}</div>
                 {item.image_url && <img src={item.image_url} alt="사진" style={{ width: '100%', height: '150px', objectFit: 'cover', borderRadius: '8px', marginBottom: '10px' }} />}
-                <div style={{ maxHeight: '150px', overflowY: 'auto', background: '#f8fafc', padding: '10px', borderRadius: '8px' }}>
-                  <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown>
-                </div>
-                <button onClick={() => handlePrintPast(item)} style={{ width: '100%', marginTop: '10px', padding: '10px', background: '#1e293b', color: 'white', border: 'none', borderRadius: '8px' }}>인쇄</button>
+                <div style={{ maxHeight: '150px', overflowY: 'auto', background: '#f8fafc', padding: '10px', borderRadius: '8px' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown></div>
+                <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 100); }} style={{ width: '100%', marginTop: '10px', padding: '10px', background: '#1e293b', color: 'white', border: 'none', borderRadius: '8px' }}>인쇄</button>
               </div>
             ))}
           </div>
@@ -393,6 +314,4 @@ function DashboardContent() {
   );
 }
 
-export default function Dashboard() {
-  return <Suspense fallback={<div style={{ padding: '40px', textAlign: 'center' }}>로딩중...</div>}><DashboardContent /></Suspense>;
-}
+export default function Dashboard() { return <Suspense fallback={<div style={{ padding: '40px', textAlign: 'center' }}>로딩중...</div>}><DashboardContent /></Suspense>; }
