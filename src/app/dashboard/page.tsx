@@ -106,6 +106,7 @@ function DashboardContent() {
     return () => { if (interval) clearInterval(interval); };
   }, [isEditing, currentReportId, report]);
 
+  // ★ 작업자 계정 조회 및 자동 생성 로직 (maybeSingle 적용으로 에러 차단)
   useEffect(() => {
     const loadPendingPhotos = async () => {
       const savedFiles = await localforage.getItem<File[]>('pending_photos');
@@ -113,20 +114,17 @@ function DashboardContent() {
     };
     
     const fetchWorkerData = async () => {
-      console.log('🔍 [디버깅] 현재 접속한 작업자 이름:', workerName);
-      
       let { data: workerData, error: workerErr } = await supabase
         .from('workers')
         .select('*')
         .eq('worker_name', workerName)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+        .maybeSingle(); // 0개여도 에러 없이 null 반환
       
-      console.log('🔍 [디버깅] workers 조회 결과:', workerData, workerErr);
+      if (workerErr) {
+        console.error('작업자 조회 에러:', workerErr.message);
+      }
 
       if (!workerData) {
-        console.log('⚠️ [디버깅] 작업자 데이터가 없어 신규 생성 시도 중...');
         const { data: newWorker, error: createError } = await supabase
           .from('workers')
           .insert([{ worker_name: workerName, exp: 0, level: 1, password: '1234' }])
@@ -134,12 +132,10 @@ function DashboardContent() {
           .single();
           
         if (createError) {
-          console.error('❌ [디버깅] 작업자 생성 실패:', createError.message);
           alert(`계정 생성 실패: ${createError.message}`);
           return;
         }
         workerData = newWorker;
-        console.log('✨ [디버깅] 신규 작업자 생성 완료:', workerData);
       }
 
       if (workerData) {
@@ -147,21 +143,18 @@ function DashboardContent() {
         setLevel(workerData.level || 1);
         setExp(workerData.exp || 0);
 
-        // 과거 기록 조회 쿼리 및 로그
-        console.log('🔍 [디버깅] inspections 테이블에서 worker_id로 조회 시도:', workerData.id);
-        const { data: reportsData, error: reportErr } = await supabase
+        const { data: reportsData } = await supabase
           .from('inspections')
           .select('*')
           .eq('worker_id', workerData.id)
           .order('created_at', { ascending: false });
         
-        console.log('🔍 [디버깅] inspections 조회 결과:', reportsData, reportErr);
-
         if (reportsData) {
           setPastReports(reportsData);
         }
       }
     };
+
     loadPendingPhotos();
     if (workerName && ALLOWED_WORKERS.includes(workerName)) fetchWorkerData();
   }, [workerName]);
@@ -201,10 +194,8 @@ function DashboardContent() {
   const handleUpdateReport = async () => {
     setIsEditing(false); 
     if (currentReportId && report) {
-      const finalMarkdown = buildMarkdownFromForm(report, editForm);
-      await supabase.from('inspections').update({ ai_report_text: finalMarkdown }).eq('id', currentReportId);
-      setPastReports(prev => prev.map(item => item.id === currentReportId ? { ...item, ai_report_text: finalMarkdown } : item));
-      setReport(finalMarkdown);
+      await supabase.from('inspections').update({ ai_report_text: report }).eq('id', currentReportId);
+      setPastReports(prev => prev.map(item => item.id === currentReportId ? { ...item, ai_report_text: report } : item));
       localStorage.removeItem(`kt_autosave_${currentReportId}`);
       setLastSavedTime(null);
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 }, colors: ['#26ccff', '#a25afd', '#ff5e7e', '#88ff5a', '#fcff42', '#ffa62d', '#ff36ff'] });
@@ -275,16 +266,39 @@ function DashboardContent() {
       const newFiles = Array.from(e.target.files);
       const compressedFiles = await Promise.all(newFiles.map(async (f) => { try { return await imageCompression(f, { maxSizeMB: 0.3, maxWidthOrHeight: 1024, initialQuality: 0.7, useWebWorker: true }); } catch { return f; } }));
       const currentSaved = await localforage.getItem<File[]>('pending_photos') || []; const newTotalFiles = [...currentSaved, ...compressedFiles];
-      await localforage.setItem('pending_photos', newTotalFiles); setFiles(newTotalFiles); setPreviewUrls(newTotalFiles.map(f => URL.createObjectURL(f))); setReport(null); setIsEditing(false);
+      await localforage.setItem('pending_photos', newTotalFiles);
+      setFiles(newTotalFiles); setPreviewUrls(newTotalFiles.map(f => URL.createObjectURL(f))); setReport(null); setIsEditing(false);
     }
   };
-  const removeFile = async (idx: number) => { const newFiles = files.filter((_, i) => i !== idx); await localforage.setItem('pending_photos', newFiles); setFiles(newFiles); setPreviewUrls(newFiles.map(f => URL.createObjectURL(f))); };
+
+  const removeFile = async (idx: number) => {
+    const newFiles = files.filter((_, i) => i !== idx);
+    await localforage.setItem('pending_photos', newFiles);
+    setFiles(newFiles); setPreviewUrls(newFiles.map(f => URL.createObjectURL(f)));
+  };
   
+  // ★ 사진 분석 및 DB 저장 로직 (안전장치 추가)
   const handleUploadAndAnalyze = async () => {
     if (files.length === 0) return alert('사진을 추가해주세요!');
     
-    if (!workerId) {
-      return alert(`DB 연동 대기중입니다. 새로고침(F5) 후 다시 시도해주세요.`);
+    // 만약 workerId가 아직 안 잡혔다면 현재 이름으로 즉시 생성 시도
+    let currentWorkerId = workerId;
+    if (!currentWorkerId) {
+      const { data: tempWorker } = await supabase.from('workers').select('id').eq('worker_name', workerName).maybeSingle();
+      if (tempWorker) {
+        currentWorkerId = tempWorker.id;
+        setWorkerId(tempWorker.id);
+      } else {
+        const { data: newW } = await supabase.from('workers').insert([{ worker_name: workerName, exp: 0, level: 1, password: '1234' }]).select().single();
+        if (newW) {
+          currentWorkerId = newW.id;
+          setWorkerId(newW.id);
+        }
+      }
+    }
+
+    if (!currentWorkerId) {
+      return alert('작업자 계정 연동 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
     }
 
     setAnalyzing(true); setReport(null); setIsEditing(false);
@@ -311,37 +325,51 @@ function DashboardContent() {
       formData.append('workDesc', workDescInput); 
       formData.append('inspector', workerName); 
       
-      const res = await fetch('/api/analyze', { method: 'POST', body: formData }); const resData = await res.json();
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData }); 
+      const resData = await res.json();
       if (!res.ok) throw new Error(resData.error || '분석 실패');
       
-      await localforage.removeItem('pending_photos'); setFiles([]); setReport(resData.report);
+      await localforage.removeItem('pending_photos'); 
+      setFiles([]); 
+      setReport(resData.report);
       
-      console.log('💾 [디버깅] inspections 테이블에 저장 시도 중... worker_id:', workerId);
+      // ★ inspections 테이블에 확실하게 저장
       const { data: insertedData, error: dbError } = await supabase.from('inspections').insert([
-        { worker_id: workerId, image_url: imageUrlsString, ai_report_text: resData.report, status: '완료' }
+        { worker_id: currentWorkerId, image_url: imageUrlsString, ai_report_text: resData.report, status: '완료' }
       ]).select().single();
       
       if (dbError) {
-        console.error('❌ [디버깅] DB 저장 에러 발생:', dbError.message);
         throw new Error(`DB 저장 실패: ${dbError.message}`);
       }
 
-      console.log('✨ [디버깅] DB 저장 성공:', insertedData);
-      if (insertedData) { setCurrentReportId(insertedData.id); setPastReports(prev => [insertedData, ...prev]); }
+      if (insertedData) { 
+        setCurrentReportId(insertedData.id); 
+        setPastReports(prev => [insertedData, ...prev]); 
+      }
       
       const hasDanger = resData.report.includes('불량'); 
-      if (hasDanger) alert('⚠️️ 위험 요소 발견! 보너스 10 EXP 추가 지급');
+      if (hasDanger) alert('⚠️ 위험 요소 발견! 보너스 10 EXP 추가 지급');
       
       const gainedExp = (files.length * 5) + (hasDanger ? 10 : 0); 
       let tempExp = exp + gainedExp; let calcLevel = 1; let reqExp = 100;
       while (tempExp >= reqExp) { tempExp -= reqExp; calcLevel++; reqExp *= 2; }
       
-      if (calcLevel > level) { setShowLevelUpModal(true); confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } }); setTimeout(() => setShowLevelUpModal(false), 5000); }
+      if (calcLevel > level) { 
+        setShowLevelUpModal(true); 
+        confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } }); 
+        setTimeout(() => setShowLevelUpModal(false), 5000); 
+      }
       
-      setExp(exp + gainedExp); setLevel(calcLevel);
-      await supabase.from('workers').update({ exp: exp + gainedExp, level: calcLevel }).eq('id', workerId);
+      setExp(exp + gainedExp); 
+      setLevel(calcLevel);
       
-    } catch (err: any) { alert(`오류: ${err.message}`); } finally { setAnalyzing(false); }
+      await supabase.from('workers').update({ exp: exp + gainedExp, level: calcLevel }).eq('id', currentWorkerId);
+      
+    } catch (err: any) { 
+      alert(`오류: ${err.message}`); 
+    } finally { 
+      setAnalyzing(false); 
+    }
   };
 
   const mdComps = {
