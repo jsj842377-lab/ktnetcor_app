@@ -8,7 +8,7 @@ import remarkGfm from 'remark-gfm';
 import confetti from 'canvas-confetti';
 import imageCompression from 'browser-image-compression';
 import localforage from 'localforage';
-import { useTheme } from '@/context/ThemeContext'; // ★ 전역 테마 불러오기
+import { useTheme } from '@/context/ThemeContext';
 
 const ALLOWED_WORKERS = ['전소정', '김철수', '이영희', '박지민', '최동훈', '정유진', '강민재', '조수빈', '윤건우', '홍길동'];
 
@@ -17,7 +17,6 @@ function DashboardContent() {
   const router = useRouter();
   const workerName = searchParams.get('worker') || '작업자';
 
-  // ★ 전역 다크 모드 상태와 토글 함수 추출
   const { isDarkMode, toggleTheme } = useTheme();
 
   const currentYear = new Date().getFullYear();
@@ -63,7 +62,6 @@ function DashboardContent() {
   const [printItem, setPrintItem] = useState<any>(null);
   const reportRef = useRef<HTMLDivElement>(null);
 
-  // ★ 다크 모드/라이트 모드 컬러 팔레트 객체 (배경 설정용)
   const theme = isDarkMode ? {
     bg: '#0f172a', cardBg: '#1e293b', textMain: '#f8fafc', textSub: '#94a3b8',
     border: '#334155', inputBg: '#0f172a', mdTableHead: '#334155', btnCancel: '#334155'
@@ -209,21 +207,19 @@ function DashboardContent() {
     }
   };
 
-  // ★ 다크 모드 그대로 유지하여 PDF를 추출하는 함수 (html2pdf)
   const handleCapturePDF = async () => {
     const element = reportRef.current;
     if (!element) return;
     
-    // SSR 에러 방지를 위해 클릭 시점에 동적 임포트
     const html2pdf = (await import('html2pdf.js')).default;
     
+    // ★ 에러 원천 차단: as const 를 사용하여 타입스크립트의 엄격한 타입 검사를 통과시킵니다.
     const opt = {
       margin: 10,
       filename: `안전점검보고서_${new Date().getTime()}.pdf`,
-      image: { type: 'jpeg', quality: 0.98 },
-      // 현재 다크 모드 상태면 다크 배경을, 아니면 흰색 배경을 캡처 영역에 설정
+      image: { type: 'jpeg' as const, quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true, backgroundColor: isDarkMode ? '#1e293b' : '#ffffff' },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
     };
 
     html2pdf().set(opt).from(element).save();
@@ -285,7 +281,6 @@ function DashboardContent() {
   };
 
   return (
-    // 부모 컨텍스트(ThemeContext)에서 배경을 관리하므로 가장 바깥 div의 수동 배경 설정은 제외합니다.
     <div style={{ maxWidth: '640px', margin: '0 auto', padding: '16px', fontFamily: "'Pretendard', sans-serif" }}>
       <style dangerouslySetInnerHTML={{ __html: `
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
@@ -410,7 +405,6 @@ function DashboardContent() {
               <div className="no-print" style={{ display: 'flex', gap: '10px', marginTop: '20px', flexWrap: 'wrap' }}>
                 <button onClick={handleStartEdit} style={{ flex: 1, minWidth: '100px', padding: '12px', cursor: 'pointer', borderRadius: '8px', border: `1px solid ${theme.border}`, background: theme.btnCancel, color: theme.textMain, fontWeight: 'bold' }}>수정</button>
                 <button onClick={() => window.print()} style={{ flex: 1, minWidth: '100px', padding: '12px', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>흰 바탕 인쇄</button>
-                {/* ★ 화면 컬러(다크모드) 그대로를 살리는 PDF 캡처 버튼 */}
                 <button onClick={handleCapturePDF} style={{ flex: 1, minWidth: '120px', padding: '12px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>다크모드 원본 캡처</button>
               </div>
             </>
