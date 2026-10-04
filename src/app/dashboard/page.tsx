@@ -8,6 +8,7 @@ import remarkGfm from 'remark-gfm';
 import confetti from 'canvas-confetti';
 import imageCompression from 'browser-image-compression';
 import localforage from 'localforage';
+import { useTheme } from '@/context/ThemeContext'; // ★ 전역 테마 불러오기
 
 const ALLOWED_WORKERS = ['전소정', '김철수', '이영희', '박지민', '최동훈', '정유진', '강민재', '조수빈', '윤건우', '홍길동'];
 
@@ -15,6 +16,9 @@ function DashboardContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const workerName = searchParams.get('worker') || '작업자';
+
+  // ★ 전역 다크 모드 상태와 토글 함수 추출
+  const { isDarkMode, toggleTheme } = useTheme();
 
   const currentYear = new Date().getFullYear();
   const currentQuarter = Math.floor(new Date().getMonth() / 3) + 1;
@@ -58,6 +62,15 @@ function DashboardContent() {
 
   const [printItem, setPrintItem] = useState<any>(null);
   const reportRef = useRef<HTMLDivElement>(null);
+
+  // ★ 다크 모드/라이트 모드 컬러 팔레트 객체 (배경 설정용)
+  const theme = isDarkMode ? {
+    bg: '#0f172a', cardBg: '#1e293b', textMain: '#f8fafc', textSub: '#94a3b8',
+    border: '#334155', inputBg: '#0f172a', mdTableHead: '#334155', btnCancel: '#334155'
+  } : {
+    bg: '#f8fafc', cardBg: '#ffffff', textMain: '#0f172a', textSub: '#475569',
+    border: '#cbd5e1', inputBg: '#f8fafc', mdTableHead: '#f1f5f9', btnCancel: '#e2e8f0'
+  };
 
   useEffect(() => {
     if (!ALLOWED_WORKERS.includes(workerName)) {
@@ -116,11 +129,7 @@ function DashboardContent() {
             const draft = localStorage.getItem(`kt_autosave_${r.id}`);
             if (draft && draft !== r.ai_report_text) {
               if (window.confirm('비정상 종료로 인해 저장되지 않은 이전 보고서가 발견되었습니다.\n지금 이어서 작성하시겠습니까?')) {
-                setReport(draft);
-                setCurrentReportId(r.id);
-                parseMarkdownToForm(draft);
-                setIsEditing(true);
-                break; 
+                setReport(draft); setCurrentReportId(r.id); parseMarkdownToForm(draft); setIsEditing(true); break; 
               } else {
                 localStorage.removeItem(`kt_autosave_${r.id}`);
               }
@@ -161,18 +170,14 @@ function DashboardContent() {
   const buildMarkdownFromForm = (originalMd: string, currentForm: any[]) => {
     const parts = originalMd.split('#### ■ 안전점검 항목');
     if (parts.length < 2) return originalMd;
-    
     const topPart = parts[0];
     const bottomPart = `#### ■ 안전점검 항목\n| 점검항목 | 결과(양호/불량) | 조치사항 | 비고 |\n|---|---|---|---|\n` + 
       currentForm.map(item => `| ${item.name} | ${item.result || '( )'} | ${item.action || '( )'} | ${item.note || '( )'} |`).join('\n');
-    
     return topPart + bottomPart;
   };
 
   const handleFormChange = (index: number, field: string, value: string) => {
-    const newForm = [...editForm];
-    (newForm[index] as any)[field] = value;
-    setEditForm(newForm);
+    const newForm = [...editForm]; (newForm[index] as any)[field] = value; setEditForm(newForm);
   };
 
   const handleStartEdit = () => {
@@ -180,7 +185,6 @@ function DashboardContent() {
     setIsEditing(true); setLastSavedTime(null);
   };
 
-  // ★ 저장 버튼 클릭 시 처리 함수
   const handleUpdateReport = async () => {
     setIsEditing(false); 
     if (currentReportId && report) {
@@ -190,14 +194,7 @@ function DashboardContent() {
       setReport(finalMarkdown);
       localStorage.removeItem(`kt_autosave_${currentReportId}`);
       setLastSavedTime(null);
-      
-      // ★ 추가: 수정 완료 시 폭죽 터뜨리기
-      confetti({ 
-        particleCount: 150, 
-        spread: 80, 
-        origin: { y: 0.6 },
-        colors: ['#26ccff', '#a25afd', '#ff5e7e', '#88ff5a', '#fcff42', '#ffa62d', '#ff36ff'] 
-      });
+      confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 }, colors: ['#26ccff', '#a25afd', '#ff5e7e', '#88ff5a', '#fcff42', '#ffa62d', '#ff36ff'] });
     }
   };
 
@@ -212,6 +209,26 @@ function DashboardContent() {
     }
   };
 
+  // ★ 다크 모드 그대로 유지하여 PDF를 추출하는 함수 (html2pdf)
+  const handleCapturePDF = async () => {
+    const element = reportRef.current;
+    if (!element) return;
+    
+    // SSR 에러 방지를 위해 클릭 시점에 동적 임포트
+    const html2pdf = (await import('html2pdf.js')).default;
+    
+    const opt = {
+      margin: 10,
+      filename: `안전점검보고서_${new Date().getTime()}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      // 현재 다크 모드 상태면 다크 배경을, 아니면 흰색 배경을 캡처 영역에 설정
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: isDarkMode ? '#1e293b' : '#ffffff' },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    html2pdf().set(opt).from(element).save();
+  };
+
   const toggleGender = () => { const newGender = gender === 'M' ? 'F' : 'M'; setGender(newGender); localStorage.setItem(`kt_gender_${workerName}`, newGender); };
   const getCharacterEmoji = () => { if (level === 1) return '🐣'; if (level < 3) return gender === 'M' ? '👦' : '👧'; return gender === 'M' ? '👨‍🔧' : '👩‍🔧'; };
   const handleChangePassword = async (e: React.FormEvent) => {
@@ -222,6 +239,7 @@ function DashboardContent() {
     alert('비밀번호가 성공적으로 변경되었습니다.'); setShowSettingsModal(false); setOldPwd(''); setNewPwd('');
   };
   const handleLogout = () => { if(window.confirm('정말 로그아웃 하시겠습니까?')) router.push('/'); };
+  
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const newFiles = Array.from(e.target.files);
@@ -258,37 +276,44 @@ function DashboardContent() {
   };
 
   const mdComps = {
-    table: (props: any) => <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px', border: '1.5px solid #000' }} {...props} /></div>,
-    th: (props: any) => <th style={{ border: '1px solid #000', background: '#f8fafc', padding: '10px', textAlign: 'center', fontSize: '13px', color: '#000' }} {...props} />,
-    td: (props: any) => <td style={{ border: '1px solid #000', padding: '10px', fontSize: '13px', textAlign: 'center', color: '#000' }} {...props} />,
-    h3: (props: any) => <h3 style={{ fontSize: '18px', color: '#000', marginTop: '20px', textAlign: 'center' }} {...props} />,
-    h4: (props: any) => <div style={{ textAlign: 'center', fontSize: '16px', fontWeight: 'bold', margin: '20px 0 10px 0', color: '#000' }} {...props} />,
-    ul: (props: any) => <ul style={{ paddingLeft: '20px', margin: '8px 0', color: '#000' }} {...props} />,
+    table: (props: any) => <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px', border: `1px solid ${theme.border}` }} {...props} /></div>,
+    th: (props: any) => <th style={{ border: `1px solid ${theme.border}`, background: theme.mdTableHead, padding: '10px', textAlign: 'center', fontSize: '13px', color: theme.textMain }} {...props} />,
+    td: (props: any) => <td style={{ border: `1px solid ${theme.border}`, padding: '10px', fontSize: '13px', textAlign: 'center', color: theme.textMain }} {...props} />,
+    h3: (props: any) => <h3 style={{ fontSize: '18px', color: theme.textMain, marginTop: '20px', textAlign: 'center' }} {...props} />,
+    h4: (props: any) => <div style={{ textAlign: 'center', fontSize: '16px', fontWeight: 'bold', margin: '20px 0 10px 0', color: theme.textMain }} {...props} />,
+    ul: (props: any) => <ul style={{ paddingLeft: '20px', margin: '8px 0', color: theme.textMain }} {...props} />,
   };
 
   return (
+    // 부모 컨텍스트(ThemeContext)에서 배경을 관리하므로 가장 바깥 div의 수동 배경 설정은 제외합니다.
     <div style={{ maxWidth: '640px', margin: '0 auto', padding: '16px', fontFamily: "'Pretendard', sans-serif" }}>
       <style dangerouslySetInnerHTML={{ __html: `
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes fadeInOut { 0% { opacity: 0; transform: translateY(10px); } 20% { opacity: 1; transform: translateY(0); } 80% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-10px); } }
-        @media print { body, .print-target, .print-target * { font-family: 'Pretendard', sans-serif !important; visibility: visible; } body * { visibility: hidden; } .print-target { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } img { page-break-inside: avoid; max-width: 100% !important; border: none !important; } }
+        @media print { 
+          body, .print-target, .print-target * { font-family: 'Pretendard', sans-serif !important; visibility: visible; color: #000 !important; background-color: #fff !important; border-color: #000 !important; } 
+          body * { visibility: hidden; } 
+          .print-target { position: absolute; left: 0; top: 0; width: 100%; } 
+          .no-print { display: none !important; } 
+          img { page-break-inside: avoid; max-width: 100% !important; border: none !important; } 
+        }
       `}} />
 
       {showSettingsModal && (
-        <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <form onSubmit={handleChangePassword} style={{ background: 'white', padding: '30px', borderRadius: '16px', width: '90%', maxWidth: '320px', boxSizing: 'border-box' }}>
-            <h3 style={{ margin: '0 0 20px 0', textAlign: 'center' }}>비밀번호 변경</h3>
-            <input type="password" placeholder="현재 비밀번호" value={oldPwd} onChange={e => setOldPwd(e.target.value)} style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-            <input type="password" placeholder="새 비밀번호" value={newPwd} onChange={e => setNewPwd(e.target.value)} style={{ width: '100%', padding: '12px', marginBottom: '20px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-            <div style={{ display: 'flex', gap: '10px' }}><button type="button" onClick={() => setShowSettingsModal(false)} style={{ flex: 1, padding: '12px', background: '#e2e8f0', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>취소</button><button type="submit" style={{ flex: 1, padding: '12px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>저장</button></div>
+        <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.8)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <form onSubmit={handleChangePassword} style={{ background: theme.cardBg, padding: '30px', borderRadius: '16px', width: '90%', maxWidth: '320px', boxSizing: 'border-box', border: `1px solid ${theme.border}` }}>
+            <h3 style={{ margin: '0 0 20px 0', textAlign: 'center', color: theme.textMain }}>비밀번호 변경</h3>
+            <input type="password" placeholder="현재 비밀번호" value={oldPwd} onChange={e => setOldPwd(e.target.value)} style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
+            <input type="password" placeholder="새 비밀번호" value={newPwd} onChange={e => setNewPwd(e.target.value)} style={{ width: '100%', padding: '12px', marginBottom: '20px', borderRadius: '8px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
+            <div style={{ display: 'flex', gap: '10px' }}><button type="button" onClick={() => setShowSettingsModal(false)} style={{ flex: 1, padding: '12px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '8px', cursor: 'pointer' }}>취소</button><button type="submit" style={{ flex: 1, padding: '12px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>저장</button></div>
           </form>
         </div>
       )}
 
       {showLevelUpModal && (
         <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.8)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'white', padding: '40px', borderRadius: '20px', textAlign: 'center' }}><div style={{ fontSize: '60px' }}>🎉</div><h2 style={{ color: '#2563eb' }}>레벨 업! Lv.{level}</h2><button onClick={() => setShowLevelUpModal(false)} style={{ padding: '14px', background: '#2563eb', color: 'white', borderRadius: '12px', border: 'none', width: '100%' }}>확인</button></div>
+          <div style={{ background: theme.cardBg, padding: '40px', borderRadius: '20px', textAlign: 'center', border: `1px solid ${theme.border}` }}><div style={{ fontSize: '60px' }}>🎉</div><h2 style={{ color: '#2563eb' }}>레벨 업! Lv.{level}</h2><button onClick={() => setShowLevelUpModal(false)} style={{ padding: '14px', background: '#2563eb', color: 'white', borderRadius: '12px', border: 'none', width: '100%' }}>확인</button></div>
         </div>
       )}
 
@@ -298,35 +323,38 @@ function DashboardContent() {
         </div>
       )}
 
-      <div className="no-print" style={{ padding: '16px', borderRadius: '12px', background: '#f1f5f9', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <div style={{ fontSize: '36px', padding: '8px', background: 'white', borderRadius: '50%', position: 'relative' }}>
+      <div className="no-print" style={{ padding: '16px', borderRadius: '12px', background: theme.cardBg, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px', border: `1px solid ${theme.border}` }}>
+        <div style={{ fontSize: '36px', padding: '8px', background: 'transparent', borderRadius: '50%', position: 'relative' }}>
           {getCharacterEmoji()}
           <button onClick={toggleGender} style={{ position: 'absolute', bottom: '-10px', right: '-10px', background: '#475569', color: 'white', border: 'none', borderRadius: '50%', width: '24px', height: '24px', fontSize: '12px', cursor: 'pointer' }}>🔄</button>
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', alignItems: 'center' }}>
-            <h2 style={{ margin: 0, fontSize: '16px' }}>{workerName}</h2><span style={{ fontSize: '11px', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '8px' }}>경기설계팀</span>
+            <h2 style={{ margin: 0, fontSize: '16px', color: theme.textMain }}>{workerName}</h2><span style={{ fontSize: '11px', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '8px' }}>경기설계팀</span>
           </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <span style={{ color: '#2563eb', fontWeight: 'bold' }}>Lv.{level}</span>
-            <div style={{ flex: 1, height: '10px', background: '#e2e8f0', borderRadius: '5px' }}><div style={{ width: `${Math.min(exp % 100, 100)}%`, height: '100%', background: '#3b82f6' }} /></div>
+            <div style={{ flex: 1, height: '10px', background: theme.btnCancel, borderRadius: '5px' }}><div style={{ width: `${Math.min(exp % 100, 100)}%`, height: '100%', background: '#3b82f6' }} /></div>
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <button onClick={() => setShowSettingsModal(true)} style={{ padding: '6px 8px', background: '#e2e8f0', color: '#1e293b', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>⚙️ 설정</button>
-          <button onClick={handleLogout} style={{ padding: '6px 8px', background: '#ef4444', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '12px' }}>로그아웃</button>
+          <button onClick={toggleTheme} style={{ padding: '6px 8px', background: theme.btnCancel, color: theme.textMain, borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{isDarkMode ? '☀️ 밝게' : '🌙 어둡게'}</button>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <button onClick={() => setShowSettingsModal(true)} style={{ flex: 1, padding: '6px 8px', background: theme.btnCancel, color: theme.textMain, borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>⚙️ 설정</button>
+            <button onClick={handleLogout} style={{ flex: 1, padding: '6px 8px', background: '#ef4444', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '12px' }}>로그아웃</button>
+          </div>
         </div>
       </div>
 
-      <div className="no-print" style={{ background: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '16px' }}>
-        <h3 style={{ margin: '0 0 12px 0', fontSize: '15px' }}>📝 사전 정보 입력</h3>
-        <input type="text" value={projectNumberInput} onChange={e => setProjectNumberInput(e.target.value)} placeholder="공사번호" style={{ width: '100%', padding: '10px', marginBottom: '8px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-        <input type="text" value={workTypeInput} onChange={e => setWorkTypeInput(e.target.value)} placeholder="작업공정" style={{ width: '100%', padding: '10px', marginBottom: '8px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-        <input type="text" value={workDescInput} onChange={e => setWorkDescInput(e.target.value)} placeholder="작업내용" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+      <div className="no-print" style={{ background: theme.cardBg, padding: '20px', borderRadius: '12px', border: `1px solid ${theme.border}`, marginBottom: '16px' }}>
+        <h3 style={{ margin: '0 0 12px 0', fontSize: '15px', color: theme.textMain }}>📝 사전 정보 입력</h3>
+        <input type="text" value={projectNumberInput} onChange={e => setProjectNumberInput(e.target.value)} placeholder="공사번호" style={{ width: '100%', padding: '10px', marginBottom: '8px', borderRadius: '8px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
+        <input type="text" value={workTypeInput} onChange={e => setWorkTypeInput(e.target.value)} placeholder="작업공정" style={{ width: '100%', padding: '10px', marginBottom: '8px', borderRadius: '8px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
+        <input type="text" value={workDescInput} onChange={e => setWorkDescInput(e.target.value)} placeholder="작업내용" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
       </div>
 
       <div className="no-print" style={{ marginBottom: '16px' }}>
-        <label style={{ display: 'block', textAlign: 'center', padding: '30px', background: '#fff', border: '2px dashed #94a3b8', borderRadius: '12px', cursor: 'pointer' }}>
+        <label style={{ display: 'block', textAlign: 'center', padding: '30px', background: theme.cardBg, border: `2px dashed ${theme.border}`, borderRadius: '12px', cursor: 'pointer' }}>
           <div style={{ fontSize: '32px' }}>📸 사진 추가</div><input type="file" accept="image/*" multiple onChange={handleFileChange} style={{ display: 'none' }} />
         </label>
         {previewUrls.length > 0 && (
@@ -336,10 +364,10 @@ function DashboardContent() {
         )}
       </div>
 
-      <button className="no-print" onClick={handleUploadAndAnalyze} disabled={analyzing || files.length === 0} style={{ width: '100%', padding: '16px', background: files.length ? '#2563eb' : '#cbd5e1', color: 'white', border: 'none', borderRadius: '12px', cursor: 'pointer', fontWeight: 'bold' }}>일괄 분석하기</button>
+      <button className="no-print" onClick={handleUploadAndAnalyze} disabled={analyzing || files.length === 0} style={{ width: '100%', padding: '16px', background: files.length ? '#2563eb' : theme.btnCancel, color: files.length ? 'white' : theme.textSub, border: 'none', borderRadius: '12px', cursor: 'pointer', fontWeight: 'bold' }}>일괄 분석하기</button>
 
       {report && (
-        <div className={printItem ? "no-print" : "print-target"} style={{ marginTop: '20px', padding: '20px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
+        <div className={printItem ? "no-print" : "print-target"} style={{ marginTop: '20px', padding: '20px', background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '12px' }}>
           {isEditing ? (
             <div className="no-print" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div style={{ background: '#1e293b', padding: '16px', borderRadius: '12px', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)' }}>
@@ -352,35 +380,38 @@ function DashboardContent() {
                   {editForm.map((item, i) => (
                     <div key={i} style={{ display: 'flex', gap: '8px', background: '#334155', padding: '10px', borderRadius: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                       <div style={{ width: '140px', color: 'white', fontSize: '13px', fontWeight: 'bold' }}>{item.name}</div>
-                      <select value={item.result} onChange={e => handleFormChange(i, 'result', e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: 'none', outline: 'none' }}>
+                      <select value={item.result} onChange={e => handleFormChange(i, 'result', e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: 'none', outline: 'none', backgroundColor: '#f1f5f9', color: '#0f172a', fontWeight: 'bold' }}>
                         <option value="">(상태 선택)</option><option value="양호">양호</option><option value="불량">불량</option>
                       </select>
-                      <input type="text" placeholder="조치사항 입력..." value={item.action} onChange={e => handleFormChange(i, 'action', e.target.value)} style={{ flex: 1, minWidth: '150px', padding: '8px', borderRadius: '6px', border: 'none', outline: 'none' }} />
-                      <input type="text" placeholder="비고..." value={item.note} onChange={e => handleFormChange(i, 'note', e.target.value)} style={{ width: '80px', padding: '8px', borderRadius: '6px', border: 'none', outline: 'none' }} />
+                      <input type="text" placeholder="조치사항 입력..." value={item.action} onChange={e => handleFormChange(i, 'action', e.target.value)} style={{ flex: 1, minWidth: '150px', padding: '8px', borderRadius: '6px', border: 'none', outline: 'none', backgroundColor: '#f1f5f9', color: '#0f172a' }} />
+                      <input type="text" placeholder="비고..." value={item.note} onChange={e => handleFormChange(i, 'note', e.target.value)} style={{ width: '80px', padding: '8px', borderRadius: '6px', border: 'none', outline: 'none', backgroundColor: '#f1f5f9', color: '#0f172a' }} />
                     </div>
                   ))}
                 </div>
               </div>
 
               <div style={{ display: 'flex', gap: '10px' }}>
-                <button onClick={handleCancelEdit} style={{ flex: 1, padding: '14px', background: '#e2e8f0', color: '#1e293b', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>취소</button>
+                <button onClick={handleCancelEdit} style={{ flex: 1, padding: '14px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>취소</button>
                 <button onClick={handleUpdateReport} style={{ flex: 2, padding: '14px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>저장 (마크다운 자동 변환)</button>
               </div>
             </div>
           ) : (
             <>
-              <div ref={reportRef}>
+              <div ref={reportRef} style={{ padding: '20px', background: theme.cardBg, borderRadius: '8px' }}>
                 <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
                 {previewUrls.length > 0 && (
                   <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <h4 style={{ width: '100%', borderBottom: '1px solid #000', paddingBottom: '8px', margin: '20px 0 10px 0' }}>📸 현장 사진 (첨부)</h4>
-                    {previewUrls.map((url, i) => (<img key={i} src={url} alt="첨부사진" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #e2e8f0' }} />))}
+                    <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '20px 0 10px 0', color: theme.textMain }}>📸 현장 사진 (첨부)</h4>
+                    {previewUrls.map((url, i) => (<img key={i} src={url} alt="첨부사진" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '8px', border: `1px solid ${theme.border}` }} />))}
                   </div>
                 )}
               </div>
-              <div className="no-print" style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                <button onClick={handleStartEdit} style={{ flex: 1, padding: '12px', cursor: 'pointer', borderRadius: '8px', border: '1px solid #cbd5e1' }}>수정</button>
-                <button onClick={() => window.print()} style={{ flex: 1, padding: '12px', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>PDF 인쇄</button>
+              
+              <div className="no-print" style={{ display: 'flex', gap: '10px', marginTop: '20px', flexWrap: 'wrap' }}>
+                <button onClick={handleStartEdit} style={{ flex: 1, minWidth: '100px', padding: '12px', cursor: 'pointer', borderRadius: '8px', border: `1px solid ${theme.border}`, background: theme.btnCancel, color: theme.textMain, fontWeight: 'bold' }}>수정</button>
+                <button onClick={() => window.print()} style={{ flex: 1, minWidth: '100px', padding: '12px', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>흰 바탕 인쇄</button>
+                {/* ★ 화면 컬러(다크모드) 그대로를 살리는 PDF 캡처 버튼 */}
+                <button onClick={handleCapturePDF} style={{ flex: 1, minWidth: '120px', padding: '12px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>다크모드 원본 캡처</button>
               </div>
             </>
           )}
@@ -388,15 +419,15 @@ function DashboardContent() {
       )}
 
       <div className="no-print" style={{ marginTop: '30px' }}>
-        <button onClick={() => setShowPast(!showPast)} style={{ width: '100%', padding: '16px', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px', cursor: 'pointer' }}>과거 기록 보기 ({pastReports.length}건)</button>
+        <button onClick={() => setShowPast(!showPast)} style={{ width: '100%', padding: '16px', background: theme.cardBg, border: `1px solid ${theme.border}`, color: theme.textMain, borderRadius: '12px', cursor: 'pointer' }}>과거 기록 보기 ({pastReports.length}건)</button>
         {showPast && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
             {pastReports.map((item, i) => (
-              <div key={i} style={{ padding: '16px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
+              <div key={i} style={{ padding: '16px', background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '12px' }}>
                 <div style={{ color: '#2563eb', fontWeight: 'bold', marginBottom: '10px' }}>{new Date(item.created_at).toLocaleString()}</div>
                 {item.image_url && <img src={item.image_url} alt="사진" style={{ width: '100%', height: '150px', objectFit: 'cover', borderRadius: '8px', marginBottom: '10px' }} />}
-                <div style={{ maxHeight: '150px', overflowY: 'auto', background: '#f8fafc', padding: '10px', borderRadius: '8px' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown></div>
-                <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 600); }} style={{ width: '100%', marginTop: '10px', padding: '10px', background: '#1e293b', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>인쇄</button>
+                <div style={{ maxHeight: '150px', overflowY: 'auto', background: theme.bg, padding: '10px', borderRadius: '8px' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown></div>
+                <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 600); }} style={{ width: '100%', marginTop: '10px', padding: '10px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '8px', cursor: 'pointer' }}>인쇄</button>
               </div>
             ))}
           </div>
@@ -404,7 +435,7 @@ function DashboardContent() {
       </div>
 
       {printItem && (
-        <div className="print-target" style={{ padding: '20px', background: 'white' }}>
+        <div className="print-target" style={{ padding: '20px', background: 'white', color: 'black' }}>
           <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown>
           {printItem.image_url && <img src={printItem.image_url} alt="사진" style={{ width: '100%', maxHeight: '400px', objectFit: 'contain', marginTop: '20px' }} />}
         </div>
