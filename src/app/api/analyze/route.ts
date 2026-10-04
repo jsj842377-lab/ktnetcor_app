@@ -32,9 +32,13 @@ export async function POST(req: NextRequest) {
 
     const genAI = new GoogleGenerativeAI(apiKey);
     
-    // ★ API 404 에러 원천 차단: 환경변수를 무시하고 가장 안정적인 1.5-flash 이름으로 강제 고정
-    const modelName = 'gemini-1.5-flash';
-    const model = genAI.getGenerativeModel({ model: modelName });
+    // ★ Gemini 3 최신 모델명으로 폴백(Fallback) 배열 구성 (404 에러 원천 차단)
+    const fallbackModels = [
+      'gemini-3-flash',
+      'gemini-3-flash-preview',
+      'gemini-3.0-flash',
+      process.env.GEMINI_MODEL?.trim()
+    ].filter(Boolean) as string[];
 
     const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진들을 꼼꼼히 분석하여, 반드시 아래의 [안전점검 결과보고서] 양식과 100% 동일한 마크다운(Markdown) 표 형태로 결과를 작성해주세요.
 
@@ -70,26 +74,52 @@ export async function POST(req: NextRequest) {
 `;
 
     let result;
-    let retries = 0;
-    const maxRetries = 2;
-    
-    while (retries < maxRetries) {
+    let finalError;
+
+    for (const modelName of fallbackModels) {
       try {
-        result = await model.generateContent([prompt, ...imageParts]);
-        break; 
-      } catch (err: any) {
-        const status = err.status || err.response?.status;
-        if (status === 429) throw new Error('일일 API 할당량이 소진되었습니다.');
-        if (status === 503 && retries < maxRetries - 1) {
-          retries++;
-          await delay(Math.pow(2, retries) * 1500);
-          continue;
+        const model = genAI.getGenerativeModel({ model: modelName });
+        let retries = 0;
+        const maxRetries = 2;
+        
+        while (retries < maxRetries) {
+          try {
+            result = await model.generateContent([prompt, ...imageParts]);
+            break; 
+          } catch (err: any) {
+            const status = err.status || err.response?.status;
+            if (status === 404) throw err; // 404면 즉시 배열의 다음 Gemini 3 모델로 넘김
+            if (status === 429) throw new Error('일일 API 할당량이 소진되었습니다.');
+            if (status === 503 && retries < maxRetries - 1) {
+              retries++;
+              await delay(Math.pow(2, retries) * 1500);
+              continue;
+            }
+            throw err;
+          }
         }
-        throw err;
+        if (result) break; // 성공 시 즉시 루프 탈출
+      } catch (err: any) {
+        finalError = err;
+        continue; 
       }
     }
 
-    if (!result) throw new Error('AI 분석 실패. API 키의 할당량 및 권한을 확인하세요.');
+    // 모든 시도가 실패했을 때 구글 서버에서 사용 가능한 모델 리스트를 강제로 뽑아옴
+    if (!result) {
+      try {
+        const modelListRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        const modelListData = await modelListRes.json();
+        if (modelListData.models) {
+          const availableModels = modelListData.models
+            .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+            .map((m: any) => m.name.replace('models/', ''))
+            .join(', ');
+          throw new Error(`🚨 API 키에 할당된 Gemini 3 모델 이름을 찾지 못했습니다. [사용 가능 모델]: ${availableModels}`);
+        }
+      } catch (e) {}
+      throw new Error(finalError?.message || 'Gemini 3 모델 호출에 실패했습니다.');
+    }
     
     const response = await result.response;
     return NextResponse.json({ report: response.text() });
