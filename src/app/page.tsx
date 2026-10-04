@@ -20,13 +20,13 @@ export default function HomePage() {
       return;
     }
 
-    // 1. 관리자 확인 (정확히 '관리자' 거나 'admin'일 때만)
-    if (trimmedName === '관리자' || trimmedName.toLowerCase() === 'admin') {
+    // 1. 관리자 확인 (정확히 '전현진' 이거나 'admin'일 때만 관리자 페이지로)
+    if (trimmedName === '전현진' || trimmedName.toLowerCase() === 'admin') {
       router.push('/admin');
       return;
     } 
     
-    // 2. 허용된 10명의 작업자 명단 확인
+    // 2. 허용된 10명의 작업자 명단 확인 (대시보드로)
     if (ALLOWED_WORKERS.includes(trimmedName)) {
       router.push(`/dashboard?worker=${encodeURIComponent(trimmedName)}`);
       return;
@@ -51,7 +51,7 @@ export default function HomePage() {
         
         <input 
           type="text" 
-          placeholder="이름을 입력하세요 (예: 전소정)"
+          placeholder="이름을 입력하세요 (예: 홍길동)"
           value={name} 
           onChange={e => setName(e.target.value)} 
           style={{ width: '100%', padding: '14px', marginBottom: '20px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '16px', boxSizing: 'border-box', outline: 'none' }} 
