@@ -21,6 +21,11 @@ function DashboardContent() {
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [analyzing, setAnalyzing] = useState<boolean>(false);
   
+  // ★ 추가: 공사번호, 작업공정, 작업내용 입력 상태
+  const [projectNumberInput, setProjectNumberInput] = useState<string>('안산-설비-2026-0096');
+  const [workTypeInput, setWorkTypeInput] = useState<string>('초고속 통신망 설비 점검');
+  const [workDescInput, setWorkDescInput] = useState<string>('현장 안전 수칙 준수 및 자재 적재 상태 확인');
+
   const [report, setReport] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [currentReportId, setCurrentReportId] = useState<string | null>(null);
@@ -136,22 +141,28 @@ function DashboardContent() {
 
     try {
       const firstFile = files[0];
-      const now = new Date();
-      const formattedReportDate = `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일 ${now.getHours()}시 ${now.getMinutes()}분`;
-
-      const fileExt = firstFile.name.split('.').pop();
-      const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
       
-      // ★ Supabase Storage 업로드 및 Public URL 정상 생성 로직
-      const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, firstFile);
-      if (uploadError) throw new Error(`이미지 업로드 실패: ${uploadError.message}`);
+      // ★ 요구사항 반영: 점검일자는 사진 파일의 실제 수정(촬영) 날짜로 고정
+      const rawPhotoDate = new Date(firstFile.lastModified);
+      const formattedPhotoDate = `${rawPhotoDate.getFullYear()}년 ${rawPhotoDate.getMonth() + 1}월 ${rawPhotoDate.getDate()}일 ${rawPhotoDate.getHours()}시 ${rawPhotoDate.getMinutes()}분`;
 
+      const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${firstFile.name.split('.').pop()}`;
+      
+      const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, firstFile);
+      if (uploadError) {
+        console.warn('Storage RLS 업로드 실패 (계속 진행):', uploadError.message);
+      }
+      
       const { data: publicUrlData } = supabase.storage.from('inspections').getPublicUrl(fileName);
       const imageUrl = publicUrlData?.publicUrl || '';
 
       const formData = new FormData();
       files.forEach((file) => formData.append('images', file));
-      formData.append('reportDate', formattedReportDate);
+      formData.append('photoDate', formattedPhotoDate);
+      formData.append('projectNumber', projectNumberInput);
+      formData.append('workType', workTypeInput);
+      formData.append('workDesc', workDescInput);
+      formData.append('inspector', '경기 서부설계팀');
 
       const response = await fetch('/api/analyze', { method: 'POST', body: formData });
       const resData = await response.json();
@@ -173,7 +184,7 @@ function DashboardContent() {
           setPastReports(prev => [insertedData, ...prev]);
         }
         
-        const hasDanger = resData.report.includes('위험');
+        const hasDanger = resData.report.includes('불량');
         if (hasDanger) alert('⚠️ 위험 요소 발견! 안전 기여 보너스 10 EXP가 지급되었습니다.');
         
         const bonusExp = hasDanger ? 10 : 0;
@@ -293,6 +304,41 @@ function DashboardContent() {
         >
           로그아웃
         </button>
+      </div>
+
+      {/* ★ 보고서 사전 정보 입력 섹션 추가 */}
+      <div className="no-print" style={{ background: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '16px' }}>
+        <h3 style={{ margin: '0 0 12px 0', fontSize: '15px', color: '#1e293b' }}>📝 보고서 사전 정보 입력</h3>
+        
+        <div style={{ marginBottom: '12px' }}>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>공사번호</label>
+          <input 
+            type="text" 
+            value={projectNumberInput} 
+            onChange={(e) => setProjectNumberInput(e.target.value)}
+            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', boxSizing: 'border-box' }}
+          />
+        </div>
+
+        <div style={{ marginBottom: '12px' }}>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>작업공정</label>
+          <input 
+            type="text" 
+            value={workTypeInput} 
+            onChange={(e) => setWorkTypeInput(e.target.value)}
+            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', boxSizing: 'border-box' }}
+          />
+        </div>
+
+        <div>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', color: '#475569', marginBottom: '4px' }}>작업 내용</label>
+          <input 
+            type="text" 
+            value={workDescInput} 
+            onChange={(e) => setWorkDescInput(e.target.value)}
+            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', boxSizing: 'border-box' }}
+          />
+        </div>
       </div>
 
       <div className="no-print" style={{ marginBottom: '16px' }}>

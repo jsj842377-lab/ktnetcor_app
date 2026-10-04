@@ -12,7 +12,11 @@ export async function POST(req: NextRequest) {
 
     const formData = await req.formData();
     const files = formData.getAll('images') as File[];
-    const reportDate = formData.get('reportDate') as string || '알 수 없음';
+    const photoDate = formData.get('photoDate') as string || '알 수 없음';
+    const projectNumber = formData.get('projectNumber') as string || '안산-설비-2026-0096';
+    const workType = formData.get('workType') as string || '초고속 통신망 설비 점검';
+    const workDesc = formData.get('workDesc') as string || '현장 안전 수칙 준수 및 자재 적재 상태 확인';
+    const inspector = formData.get('inspector') as string || '경기 서부설계팀';
 
     if (!files || files.length === 0) {
       return NextResponse.json({ error: '사진 파일이 전송되지 않았습니다.' }, { status: 400 });
@@ -37,19 +41,22 @@ export async function POST(req: NextRequest) {
     const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진들을 꼼꼼히 분석하여, 반드시 아래의 [안전점검 결과보고서] 양식과 100% 동일한 마크다운(Markdown) 표 형태로 결과를 작성해주세요.
 
 [작성 지침]
-1. **공사번호**: 반드시 "[지역명]-설비-2026-[랜덤4자리]" 형식으로 가상의 공사번호를 지어내어 작성하세요. (예: 안산-설비-2026-0096, 동양-초고속-2026-0295) 맨 앞단어(지역명)는 추후 협력사 이름으로 자동 추출됩니다.
-2. **조치사항 및 비고**: 2차로 사람이 직접 점검하며 작성할 예정이므로, AI는 절대로 내용을 채우지 말고 완벽히 빈칸( )으로 비워두세요.
-3. **점검자**: 빈칸으로 비워두세요.
-4. **결과(양호/불량)**: 지정된 5개의 점검항목에 대해 사진을 분석하여 AI가 1차 판단한 결과(양호 또는 불량)만 단답으로 작성하세요.
+1. **공사번호**: 입력된 값("${projectNumber}")을 그대로 사용하세요.
+2. **점검일자**: 입력된 값("${photoDate}")을 그대로 사용하세요.
+3. **작업공정**: 입력된 값("${workType}")을 그대로 사용하세요.
+4. **작업내용**: 입력된 값("${workDesc}")을 그대로 사용하세요.
+5. **점검자**: 입력된 값("${inspector}")을 그대로 사용하세요.
+6. **조치사항 및 비고**: 2차로 사람이 직접 점검하며 작성할 예정이므로, AI는 절대로 내용을 채우지 말고 완벽히 빈칸( )으로 비워두세요.
+7. **결과(양호/불량)**: 지정된 5개의 점검항목에 대해 사진을 분석하여 AI가 1차 판단한 결과(양호 또는 불량)만 단답으로 작성하세요.
 
 ### 안전점검 결과보고서
 
 #### ■ 기본 정보
 | 항목 | 내용 | 항목 | 내용 |
 |---|---|---|---|
-| **공사번호** | (형식에 맞게 생성) | **점검일자** | ${reportDate} |
-| **작업공정** | (사진 기반 추정) | **점검자** | |
-| **작업내용** | (사진 기반 핵심 요약) | | |
+| **공사번호** | ${projectNumber} | **점검일자** | ${photoDate} |
+| **작업공정** | ${workType} | **점검자** | ${inspector} |
+| **작업내용** | ${workDesc} | | |
 
 #### ■ 안전점검 항목
 | 점검항목 | 결과(양호/불량) | 조치사항 | 비고 |
@@ -82,7 +89,6 @@ export async function POST(req: NextRequest) {
         const isOverloaded = status === 503 || errMsg.includes('overloaded') || errMsg.includes('unavailable');
         if (isOverloaded && retries < maxRetries) {
           const waitTime = Math.pow(2, retries) * 1500;
-          console.warn(`[서버 과부하 감지] ${waitTime/1000}초 후 자동 재시도 (${retries}/${maxRetries})`);
           await delay(waitTime);
         } else {
           throw err; 
