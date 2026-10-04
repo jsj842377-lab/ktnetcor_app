@@ -32,12 +32,12 @@ export async function POST(req: NextRequest) {
 
     const genAI = new GoogleGenerativeAI(apiKey);
     
-    // ★ Gemini 3 최신 모델명으로 폴백(Fallback) 배열 구성 (404 에러 원천 차단)
+    // ★ 문법 오류(스마트 따옴표 및 쉼표 누락) 해결
     const fallbackModels = [
       'gemini-3-flash',
       'gemini-3-flash-preview',
       'gemini-3.0-flash',
-      ‘gemini-1.5-flash’
+      'gemini-1.5-flash',
       process.env.GEMINI_MODEL?.trim()
     ].filter(Boolean) as string[];
 
@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
             break; 
           } catch (err: any) {
             const status = err.status || err.response?.status;
-            if (status === 404) throw err; // 404면 즉시 배열의 다음 Gemini 3 모델로 넘김
+            if (status === 404) throw err; // 404면 즉시 배열의 다음 모델로 넘김
             if (status === 429) throw new Error('일일 API 할당량이 소진되었습니다.');
             if (status === 503 && retries < maxRetries - 1) {
               retries++;
@@ -106,7 +106,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 모든 시도가 실패했을 때 구글 서버에서 사용 가능한 모델 리스트를 강제로 뽑아옴
     if (!result) {
       try {
         const modelListRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
@@ -116,10 +115,10 @@ export async function POST(req: NextRequest) {
             .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
             .map((m: any) => m.name.replace('models/', ''))
             .join(', ');
-          throw new Error(`🚨 API 키에 할당된 Gemini 3 모델 이름을 찾지 못했습니다. [사용 가능 모델]: ${availableModels}`);
+          throw new Error(`🚨 API 키에 할당된 모델 이름을 찾지 못했습니다. [사용 가능 모델]: ${availableModels}`);
         }
       } catch (e) {}
-      throw new Error(finalError?.message || 'Gemini 3 모델 호출에 실패했습니다.');
+      throw new Error(finalError?.message || 'AI 모델 호출에 실패했습니다.');
     }
     
     const response = await result.response;
