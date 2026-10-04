@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-// ★ 저장 및 Vercel 갱신 확인용: 경기설계팀 10명 명단
 const ALLOWED_WORKERS = ['전소정', '김철수', '이영희', '박지민', '최동훈', '정유진', '강민재', '조수빈', '윤건우', '홍길동'];
 
 export default function HomePage() {
@@ -13,25 +12,29 @@ export default function HomePage() {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     
+    // 입력값의 앞뒤 공백을 완벽히 제거
     const trimmedName = name.trim();
+
     if (!trimmedName) {
       alert('이름을 입력해주세요.');
       return;
     }
 
-    // 1. 관리자 접속 감지 (admin 포함)
+    // 1. 관리자 확인 (정확히 '관리자' 거나 'admin'일 때만)
     if (trimmedName === '관리자' || trimmedName.toLowerCase() === 'admin') {
       router.push('/admin');
+      return;
     } 
-    // 2. 화이트리스트에 있는 작업자 감지
-    else if (ALLOWED_WORKERS.includes(trimmedName)) {
+    
+    // 2. 허용된 10명의 작업자 명단 확인
+    if (ALLOWED_WORKERS.includes(trimmedName)) {
       router.push(`/dashboard?worker=${encodeURIComponent(trimmedName)}`);
+      return;
     } 
-    // 3. 그 외의 사용자 차단
-    else {
-      alert('경기설계팀 소속 팀원만 접근할 수 있습니다. 등록된 이름을 확인해주세요.');
-      setName('');
-    }
+    
+    // 3. 그 외 입력은 모두 차단
+    alert('경기설계팀 소속 팀원만 접근할 수 있습니다. 등록된 이름을 확인해주세요.');
+    setName('');
   };
 
   return (
