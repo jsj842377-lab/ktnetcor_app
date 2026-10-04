@@ -5,7 +5,6 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function POST(req: NextRequest) {
   try {
-    // ★ 1차 방어: API 키의 앞뒤 공백(띄어쓰기) 자동 제거
     const apiKey = process.env.GEMINI_API_KEY?.trim();
     if (!apiKey) {
       return NextResponse.json({ error: '서버에 Gemini API 키가 설정되지 않았습니다.' }, { status: 500 });
@@ -48,7 +47,7 @@ export async function POST(req: NextRequest) {
 5. **점검자**: 입력된 값("${inspector}")을 그대로 사용하세요.
 6. **조치사항 및 비고**: 사람이 직접 검토할 예정이므로 AI는 절대로 내용을 채우지 말고 빈칸( )으로 두세요.
 7. **결과(양호/불량)**: 지정된 점검항목에 대해 사진을 분석하여 단답으로 작성하세요.
-8. **시간적 순서 파악**: 제공된 여러 장의 사진은 왼쪽(첫 번째)부터 오른쪽(마지막)으로 갈수록 '작업 전 ➔ 작업 중 ➔ 작업 후'의 시간 순서입니다.
+8. **시간적 순서 파악**: 제공된 여러 장의 사진은 왼쪽(첫 번째)부터 오른쪽(마지막)으로 갈수록 시간 순서입니다.
 9. **전후 비교 분석**: 첫 번째 사진에 위험 요소가 있었더라도 마지막 사진에서 개선되었다면 조치 완료로 인지하세요.
 10. **최종 결과 기준**: 결과 항목은 중간 과정이 아닌 **마지막 사진(최종 상태)을 최우선 기준**으로 최종 판정하세요.
 
@@ -72,12 +71,15 @@ export async function POST(req: NextRequest) {
 
 실제 첨부된 사진 상황에 맞추어 생성하세요.`;
 
-    // ★ 2차 방어: 환경변수의 공백 자동 제거 및 단종된 모델 삭제
     const envModel = process.env.GEMINI_MODEL?.trim();
+    
+    // ★ 1.5 버전이 닫혔을 경우를 대비해 2.0/2.5 최신 라인업 추가
     const fallbackModels = [
-      envModel,                  // Vercel 설정값 최우선 (공백 제거됨)
-      'gemini-1.5-flash',        // 표준 비전 모델
-      'gemini-1.5-pro'           // 고성능 비전 모델
+      envModel,
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-1.5-pro'
     ].filter(Boolean) as string[];
 
     let result;
@@ -95,9 +97,7 @@ export async function POST(req: NextRequest) {
             break; 
           } catch (err: any) {
             const status = err.status || err.response?.status;
-            // 404 모델 없음 에러 시, 지연 없이 즉각 다음 모델로 릴레이
-            if (status === 404) throw err; 
-            
+            if (status === 404) throw err; // 404면 지연 없이 즉각 다음 모델로
             if (status === 429) throw new Error('일일 API 할당량이 소진되었습니다.');
             if (status === 503 && retries < maxRetries - 1) {
               retries++;
@@ -107,16 +107,31 @@ export async function POST(req: NextRequest) {
             throw err;
           }
         }
-        if (result) break; // 하나라도 성공하면 루프 탈출
+        if (result) break;
       } catch (err: any) {
         finalError = err;
         continue; 
       }
     }
 
+    // ★ 핵심 디버깅 기능: 모든 모델 접속 실패 시, 구글 서버에 직접 허용된 모델 리스트를 물어봄
     if (!result) {
-      // 어떤 모델로도 분석에 실패했을 때 정확한 마지막 에러를 반환
-      throw new Error(`모든 AI 모델 호출 실패. 사유: ${finalError?.message}`);
+      try {
+        const modelListRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        const modelListData = await modelListRes.json();
+        
+        if (modelListData.models) {
+          const availableModels = modelListData.models
+            .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+            .map((m: any) => m.name.replace('models/', ''))
+            .join(', ');
+            
+          throw new Error(`🚨 현재 API 키에 허용된 비전 모델이 없습니다.\n[현재 사용 가능한 모델]: ${availableModels}\n\n👉 위 리스트 중 하나를 복사하여 Vercel 환경변수 'GEMINI_MODEL' 값으로 설정하세요.`);
+        }
+      } catch (fetchErr) {
+        // 리스트 가져오기조차 실패하면 원래 에러를 던짐
+      }
+      throw new Error(finalError?.message || '모든 AI 모델 호출에 실패했습니다. API 키 권한을 확인하세요.');
     }
     
     const response = await result.response;
