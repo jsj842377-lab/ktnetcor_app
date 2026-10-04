@@ -9,6 +9,20 @@ import confetti from 'canvas-confetti';
 import imageCompression from 'browser-image-compression';
 import localforage from 'localforage';
 
+// ★ 1. 안전 명언 및 팁 배열 정의 (원하는 문구로 자유롭게 추가 가능)
+const SAFETY_TIPS = [
+  "안전은 타협의 대상이 아닙니다.",
+  "당신의 안전모가 당신의 생명을 지킵니다.",
+  "작업 전 5분 점검, 당신의 평생을 지킵니다.",
+  "아차 사고, 다음은 진짜 사고입니다.",
+  "정리정돈은 안전의 첫걸음입니다.",
+  "빨리빨리 보다는 안전하게!",
+  "안전수칙 준수는 가족에 대한 사랑입니다.",
+  "익숙함에 속아 안전을 잃지 마세요.",
+  "위험요소 발견 즉시 조치하세요.",
+  "우리의 목표는 무재해입니다!"
+];
+
 function DashboardContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -24,6 +38,9 @@ function DashboardContent() {
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [analyzing, setAnalyzing] = useState<boolean>(false);
   
+  // ★ 2. 로딩 중 표시할 팁을 관리하는 State 추가
+  const [loadingTip, setLoadingTip] = useState<string>('');
+  
   const [projectNumberInput, setProjectNumberInput] = useState<string>('안산-설비-2026-0096');
   const [workTypeInput, setWorkTypeInput] = useState<string>('초고속 통신망 설비 점검');
   const [workDescInput, setWorkDescInput] = useState<string>('현장 안전 수칙 준수 및 자재 적재 상태 확인');
@@ -37,6 +54,20 @@ function DashboardContent() {
   const [showLevelUpModal, setShowLevelUpModal] = useState<boolean>(false);
   const [printItem, setPrintItem] = useState<any>(null);
   const reportRef = useRef<HTMLDivElement>(null);
+
+  // ★ 3. analyzing 상태가 켜질 때마다 1.5초 간격으로 명언을 무작위로 바꾸는 Effect
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (analyzing) {
+      setLoadingTip(SAFETY_TIPS[Math.floor(Math.random() * SAFETY_TIPS.length)]);
+      interval = setInterval(() => {
+        setLoadingTip(SAFETY_TIPS[Math.floor(Math.random() * SAFETY_TIPS.length)]);
+      }, 1500);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [analyzing]);
 
   useEffect(() => {
     const loadPendingPhotos = async () => {
@@ -186,7 +217,7 @@ function DashboardContent() {
         }
         
         const hasDanger = resData.report.includes('불량');
-        if (hasDanger) alert('⚠️ 불량 발견! 10 EXP 추가 지급');
+        if (hasDanger) alert('⚠️ 위험 요소 발견! 보너스 10 EXP 추가 지급');
         
         const gainedExp = (files.length * 5) + (hasDanger ? 10 : 0); 
         let tempExp = exp + gainedExp;
@@ -240,7 +271,11 @@ function DashboardContent() {
 
   return (
     <div style={{ maxWidth: '640px', margin: '0 auto', padding: '16px', fontFamily: 'sans-serif' }}>
-      <style dangerouslySetInnerHTML={{ __html: `@media print { body * { visibility: hidden; } .print-target, .print-target * { visibility: visible; } .print-target { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } }`}} />
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes fadeInOut { 0% { opacity: 0; transform: translateY(10px); } 20% { opacity: 1; transform: translateY(0); } 80% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-10px); } }
+        @media print { body * { visibility: hidden; } .print-target, .print-target * { visibility: visible; } .print-target { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } }
+      `}} />
 
       {showLevelUpModal && (
         <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.8)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -252,9 +287,16 @@ function DashboardContent() {
         </div>
       )}
 
+      {/* ★ 4. 로딩 UI 애니메이션 및 랜덤 명언 출력 적용 */}
       {analyzing && (
-        <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.75)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ color: 'white', fontSize: '18px', fontWeight: 'bold' }}>AI가 사진을 분석 중입니다...</div>
+        <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
+          <div style={{ width: '60px', height: '60px', border: '5px solid rgba(255,255,255,0.2)', borderTop: '5px solid #3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '24px' }} />
+          <h3 style={{ color: '#60a5fa', fontSize: '15px', marginBottom: '16px', fontWeight: 'bold' }}>Vision AI 분석 중...</h3>
+          <div style={{ height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <p key={loadingTip} style={{ color: 'white', fontSize: '20px', fontWeight: 'bold', textAlign: 'center', lineHeight: '1.4', animation: 'fadeInOut 1.5s ease-in-out forwards', margin: 0 }}>
+              "{loadingTip}"
+            </p>
+          </div>
         </div>
       )}
 
