@@ -36,7 +36,8 @@ export async function POST(req: NextRequest) {
     );
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    // ★ 수정: 404 Not Found 에러 해결을 위해 -latest 접미사 추가
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
     
     const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진들을 꼼꼼히 분석하여, 반드시 아래의 [안전점검 결과보고서] 양식과 100% 동일한 마크다운(Markdown) 표 형태로 결과를 작성해주세요.
 

@@ -7,10 +7,14 @@ import * as XLSX from 'xlsx-js-style';
 export default function AdminPage() {
   const [password, setPassword] = useState<string>('');
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  // ★ 수정: 잘못된 초기값 표기(any[])를 올바른 빈 배열([])로 수정
   const [inspections, setInspections] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  
+  // ★ 추가: 월별/분기별 조회 토글 상태 및 연도/분기 상태
+  const [viewMode, setViewMode] = useState<'month' | 'quarter'>('month');
   const [selectedMonth, setSelectedMonth] = useState<string>('2026-10');
+  const [selectedYear, setSelectedYear] = useState<string>('2026');
+  const [selectedQuarter, setSelectedQuarter] = useState<number>(4);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,9 +31,20 @@ export default function AdminPage() {
 
     const fetchData = async () => {
       setLoading(true);
-      const startDate = new Date(`${selectedMonth}-01T00:00:00.000Z`);
-      const endDate = new Date(startDate);
-      endDate.setMonth(endDate.getMonth() + 1);
+      let startDate: Date;
+      let endDate: Date;
+
+      // ★ 모드에 따른 날짜 범위 계산 로직
+      if (viewMode === 'month') {
+        startDate = new Date(`${selectedMonth}-01T00:00:00.000Z`);
+        endDate = new Date(startDate);
+        endDate.setMonth(endDate.getMonth() + 1);
+      } else {
+        const startMonth = String((selectedQuarter - 1) * 3 + 1).padStart(2, '0');
+        startDate = new Date(`${selectedYear}-${startMonth}-01T00:00:00.000Z`);
+        endDate = new Date(startDate);
+        endDate.setMonth(endDate.getMonth() + 3);
+      }
 
       const { data, error } = await supabase
         .from('inspections')
@@ -47,7 +62,7 @@ export default function AdminPage() {
     };
 
     fetchData();
-  }, [selectedMonth, isAuthenticated]);
+  }, [viewMode, selectedMonth, selectedYear, selectedQuarter, isAuthenticated]);
 
   const extractFromMarkdown = (text: string, key: string) => {
     const regex = new RegExp(`\\|\\s*\\*\\*${key}\\*\\*\\s*\\|\\s*([^\\|]+)\\s*\\|`);
@@ -56,7 +71,7 @@ export default function AdminPage() {
   };
 
   const exportToExcel = () => {
-    if (inspections.length === 0) return alert('해당 월에 점검 기록이 없습니다.');
+    if (inspections.length === 0) return alert('조회된 점검 기록이 없습니다.');
 
     const headerStyle = {
       fill: { fgColor: { rgb: "E2E8F0" } },
@@ -114,7 +129,6 @@ export default function AdminPage() {
     });
 
     const companies = Array.from(companySet);
-
     const crossTabHeaders = ['', ...companies].map(text => ({ v: text, s: headerStyle }));
     
     const crossTabSheetData: any[][] = [
@@ -149,7 +163,12 @@ export default function AdminPage() {
     XLSX.utils.book_append_sheet(wb, ws1, '협력사관리');
     XLSX.utils.book_append_sheet(wb, ws2, '세부이력');
 
-    XLSX.writeFile(wb, `안전점검_종합결과물_${selectedMonth}.xlsx`);
+    // ★ 다운로드 파일명 동적 생성
+    const exportFileName = viewMode === 'month' 
+      ? `안전점검_종합결과물_${selectedMonth}.xlsx` 
+      : `안전점검_종합결과물_${selectedYear}년_${selectedQuarter}분기.xlsx`;
+
+    XLSX.writeFile(wb, exportFileName);
   };
 
   if (!isAuthenticated) {
@@ -181,19 +200,62 @@ export default function AdminPage() {
           👨‍💼 현장 관리자 대시보드
         </h1>
         
-        <div style={{ marginTop: '24px', padding: '20px', backgroundColor: '#f1f5f9', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <label style={{ fontWeight: 'bold', color: '#1e293b' }}>📅 조회 월 선택 :</label>
-          <input 
-            type="month" 
-            value={selectedMonth} 
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            style={{ padding: '10px 16px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '16px', outline: 'none' }}
-          />
+        {/* ★ 월별/분기별 조회 탭 버튼 영역 */}
+        <div style={{ display: 'flex', gap: '10px', marginTop: '24px' }}>
+          <button 
+            onClick={() => setViewMode('month')} 
+            style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', background: viewMode === 'month' ? '#2563eb' : '#f8fafc', color: viewMode === 'month' ? 'white' : '#475569', fontWeight: 'bold', cursor: 'pointer' }}
+          >
+            월별 조회
+          </button>
+          <button 
+            onClick={() => setViewMode('quarter')} 
+            style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', background: viewMode === 'quarter' ? '#2563eb' : '#f8fafc', color: viewMode === 'quarter' ? 'white' : '#475569', fontWeight: 'bold', cursor: 'pointer' }}
+          >
+            분기별 조회
+          </button>
+        </div>
+
+        {/* ★ 선택된 모드에 따른 입력 필드 표시 */}
+        <div style={{ marginTop: '20px', padding: '20px', backgroundColor: '#f1f5f9', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+          {viewMode === 'month' ? (
+            <>
+              <label style={{ fontWeight: 'bold', color: '#1e293b' }}>📅 조회 월 선택 :</label>
+              <input 
+                type="month" 
+                value={selectedMonth} 
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                style={{ padding: '10px 16px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '16px', outline: 'none' }}
+              />
+            </>
+          ) : (
+            <>
+              <label style={{ fontWeight: 'bold', color: '#1e293b' }}>📅 조회 분기 선택 :</label>
+              <select 
+                value={selectedYear} 
+                onChange={(e) => setSelectedYear(e.target.value)}
+                style={{ padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '16px', outline: 'none' }}
+              >
+                <option value="2025">2025년</option>
+                <option value="2026">2026년</option>
+                <option value="2027">2027년</option>
+              </select>
+              <select 
+                value={selectedQuarter} 
+                onChange={(e) => setSelectedQuarter(Number(e.target.value))}
+                style={{ padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '16px', outline: 'none' }}
+              >
+                <option value={1}>1분기 (1~3월)</option>
+                <option value={2}>2분기 (4~6월)</option>
+                <option value={3}>3분기 (7~9월)</option>
+                <option value={4}>4분기 (10~12월)</option>
+              </select>
+            </>
+          )}
         </div>
 
         <p style={{ color: '#475569', marginTop: '20px', lineHeight: '1.6' }}>
-          <strong>{selectedMonth}</strong>에 해당하는 <strong>총 {inspections.length}건</strong>의 데이터를 스캔했습니다. 
-          <br/>AI 보고서의 마크다운 텍스트를 파싱하여 공사번호, 협력사명, 공사유형을 자동 추출하고 2가지 결과물(협력사관리, 세부이력)을 생성합니다.
+          <strong>{viewMode === 'month' ? selectedMonth : `${selectedYear}년 ${selectedQuarter}분기`}</strong> 기간에 해당하는 <strong>총 {inspections.length}건</strong>의 데이터를 스캔했습니다. 
         </p>
         
         {loading ? (
@@ -203,7 +265,7 @@ export default function AdminPage() {
             onClick={exportToExcel}
             style={{ marginTop: '20px', width: '100%', padding: '16px', background: '#10b981', color: 'white', fontSize: '18px', fontWeight: 'bold', border: 'none', borderRadius: '12px', cursor: 'pointer', transition: 'background-color 0.2s' }}
           >
-            📊 {selectedMonth} 엑셀 결과물 다운로드
+            📊 엑셀 결과물 다운로드
           </button>
         )}
       </div>
