@@ -24,8 +24,6 @@ function DashboardContent() {
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [analyzing, setAnalyzing] = useState<boolean>(false);
   const [isDataLoaded, setIsDataLoaded] = useState<boolean>(false);
-  
-  // ★ 고화질 PDF 생성 대기 시간을 사용자에게 알려주는 상태 추가
   const [isPdfGenerating, setIsPdfGenerating] = useState<boolean>(false);
   
   const [gender, setGender] = useState<'M'|'F'>('M');
@@ -70,6 +68,10 @@ function DashboardContent() {
     bg: '#f8fafc', cardBg: '#ffffff', textMain: '#0f172a', textSub: '#475569',
     border: '#cbd5e1', inputBg: '#f8fafc', mdTableHead: '#f1f5f9', btnCancel: '#e2e8f0'
   };
+
+  // ★ 현재 보고서용 오늘 날짜 동적 생성 (YYYY-MM-DD)
+  const todayDate = new Date();
+  const todayStr = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`;
 
   useEffect(() => {
     let current = queryWorker || workerName;
@@ -210,13 +212,19 @@ function DashboardContent() {
     }
   };
 
+  // ★ 1. 새 보고서 캡처 파일명 동적 조합 (날짜 + 시간 + 이름)
   const handleCapturePDF = async () => {
     const element = reportRef.current;
     if (!element) return;
     const html2pdf = (await import('html2pdf.js')).default;
+    
+    const d = new Date();
+    const dateString = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const timeString = `${String(d.getHours()).padStart(2, '0')}시${String(d.getMinutes()).padStart(2, '0')}분`;
+    
     const opt = {
       margin: 10,
-      filename: `안전점검보고서_${new Date().getTime()}.pdf`,
+      filename: `현장점검기록_${dateString}_${timeString}_${workerName}.pdf`,
       image: { type: 'jpeg' as const, quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true, backgroundColor: isDarkMode ? '#1e293b' : '#ffffff' },
       jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
@@ -225,12 +233,11 @@ function DashboardContent() {
     html2pdf().set(opt).from(element).save();
   };
 
-  // ★ 완벽한 원패스 PDF 다운로드 로직 (사진 로딩 대기열 포함)
+  // ★ 2. 과거 보고서 캡처 파일명 동적 조합 (날짜 + 시간 + 이름)
   const handleDownloadPastPDF = async (item: any) => {
     setIsPdfGenerating(true);
-    setPrintItem(item); // 렌더링 시작
+    setPrintItem(item); 
     
-    // 리액트가 DOM을 그릴 수 있도록 약간 대기
     setTimeout(async () => {
       const element = document.getElementById('past-report-pdf');
       if (!element) {
@@ -238,29 +245,32 @@ function DashboardContent() {
         return;
       }
       
-      // ★ 100% 보장: 내부의 모든 이미지 렌더링이 완료될 때까지 Promise 대기
       const images = Array.from(element.getElementsByTagName('img'));
       await Promise.all(images.map(img => {
         if (img.complete) return Promise.resolve();
         return new Promise(resolve => {
           img.onload = resolve;
-          img.onerror = resolve; // 에러가 나도 진행을 막지 않음
+          img.onerror = resolve; 
         });
       }));
+
+      const d = new Date(item.created_at);
+      const dateString = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const timeString = `${String(d.getHours()).padStart(2, '0')}시${String(d.getMinutes()).padStart(2, '0')}분`;
 
       const html2pdf = (await import('html2pdf.js')).default;
       const opt = {
         margin: 15, 
-        filename: `현장점검기록_${new Date(item.created_at).getTime()}.pdf`,
+        filename: `현장점검기록_${dateString}_${timeString}_${workerName}.pdf`,
         image: { type: 'jpeg' as const, quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' }, // 배경을 흰색으로 고정하여 전문적인 문서 형태 유지
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
         jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
         pagebreak: { mode: ['css', 'legacy'] } 
       };
 
       html2pdf().set(opt).from(element).save().then(() => {
-        setPrintItem(null); // 문서 숨김
-        setIsPdfGenerating(false); // 로딩 스피너 종료
+        setPrintItem(null); 
+        setIsPdfGenerating(false); 
       });
     }, 100); 
   };
@@ -413,7 +423,6 @@ function DashboardContent() {
         }
       `}} />
 
-      {/* ★ PDF 다운로드 스피너 애니메이션 */}
       {isPdfGenerating && (
         <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ width: '60px', height: '60px', border: '5px solid rgba(255,255,255,0.2)', borderTop: '5px solid #10b981', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '24px' }} />
@@ -531,7 +540,11 @@ function DashboardContent() {
             </div>
           ) : (
             <>
+              {/* ★ 현재 작성중인 새 보고서 렌더링 영역 (다이내믹 제목 추가) */}
               <div ref={reportRef} style={{ padding: '20px', background: theme.cardBg, borderRadius: '0' }}>
+                <h2 className="print-title" style={{ textAlign: 'center', fontSize: '24px', borderBottom: `2px solid ${theme.border}`, paddingBottom: '16px', marginBottom: '24px', color: theme.textMain }}>
+                  {todayStr} {workerName} 안전점검 보고서
+                </h2>
                 <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
                 {previewUrls.length > 0 && (
                   <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -608,25 +621,32 @@ function DashboardContent() {
         )}
       </div>
 
-      {/* ★ 실제 PDF 캡처가 이루어지는 규격화된 문서 레이아웃 */}
-      {printItem && (
-        <div className="print-target-wrapper" style={{ position: 'absolute', top: '-9999px', left: 0, width: '100%' }}>
-          <div id="past-report-pdf" className="print-target" style={{ padding: '40px', background: 'white', color: 'black', width: '800px', margin: '0 auto', boxSizing: 'border-box' }}>
-            <h2 style={{ textAlign: 'center', fontSize: '24px', borderBottom: '2px solid black', paddingBottom: '16px', marginBottom: '24px' }}>안전점검 결과보고서</h2>
-            <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown>
-            {printItem.image_url && (
-              <div style={{ marginTop: '30px', pageBreakInside: 'avoid' }}>
-                <h4 style={{ width: '100%', borderBottom: `2px solid black`, paddingBottom: '8px', margin: '20px 0 15px 0', color: 'black', fontSize: '18px' }}>📸 현장 사진 (첨부)</h4>
-                <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
-                  {printItem.image_url.split(',').filter(Boolean).map((u: string, i: number) => (
-                    <img key={i} src={u} crossOrigin="anonymous" className="avoid-break" style={{ width: '47%', height: '300px', objectFit: 'cover', border: `1px solid #ccc` }} alt="첨부사진" />
-                  ))}
+      {printItem && (() => {
+        // ★ 과거 보고서 PDF 렌더링용 날짜 동적 생성 로직
+        const pastDate = new Date(printItem.created_at);
+        const pastDateStr = `${pastDate.getFullYear()}-${String(pastDate.getMonth() + 1).padStart(2, '0')}-${String(pastDate.getDate()).padStart(2, '0')}`;
+        
+        return (
+          <div className="print-target-wrapper" style={{ position: 'absolute', top: '-9999px', left: 0, width: '100%' }}>
+            <div id="past-report-pdf" className="print-target" style={{ padding: '40px', background: 'white', color: 'black', width: '800px', margin: '0 auto', boxSizing: 'border-box' }}>
+              <h2 style={{ textAlign: 'center', fontSize: '24px', borderBottom: '2px solid black', paddingBottom: '16px', marginBottom: '24px' }}>
+                {pastDateStr} {workerName} 안전점검 보고서
+              </h2>
+              <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown>
+              {printItem.image_url && (
+                <div style={{ marginTop: '30px', pageBreakInside: 'avoid' }}>
+                  <h4 style={{ width: '100%', borderBottom: `2px solid black`, paddingBottom: '8px', margin: '20px 0 15px 0', color: 'black', fontSize: '18px' }}>📸 현장 사진 (첨부)</h4>
+                  <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                    {printItem.image_url.split(',').filter(Boolean).map((u: string, i: number) => (
+                      <img key={i} src={u} crossOrigin="anonymous" className="avoid-break" style={{ width: '47%', height: '300px', objectFit: 'cover', border: `1px solid #ccc` }} alt="첨부사진" />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
