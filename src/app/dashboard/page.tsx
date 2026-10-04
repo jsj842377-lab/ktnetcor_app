@@ -113,8 +113,9 @@ function DashboardContent() {
     };
     
     const fetchWorkerData = async () => {
-      // 1. 작업자 계정 정보 불러오기
-      let { data: workerData } = await supabase
+      console.log('🔍 [디버깅] 현재 접속한 작업자 이름:', workerName);
+      
+      let { data: workerData, error: workerErr } = await supabase
         .from('workers')
         .select('*')
         .eq('worker_name', workerName)
@@ -122,8 +123,10 @@ function DashboardContent() {
         .limit(1)
         .single();
       
-      // ★ 핵심 해결: DB에 내 이름이 없으면 튕겨내지 않고 즉시 신규 계정을 자동 생성합니다.
+      console.log('🔍 [디버깅] workers 조회 결과:', workerData, workerErr);
+
       if (!workerData) {
+        console.log('⚠️ [디버깅] 작업자 데이터가 없어 신규 생성 시도 중...');
         const { data: newWorker, error: createError } = await supabase
           .from('workers')
           .insert([{ worker_name: workerName, exp: 0, level: 1, password: '1234' }])
@@ -131,39 +134,31 @@ function DashboardContent() {
           .single();
           
         if (createError) {
-          alert('데이터베이스 연결 오류가 발생했습니다. RLS 설정을 확인해주세요.');
+          console.error('❌ [디버깅] 작업자 생성 실패:', createError.message);
+          alert(`계정 생성 실패: ${createError.message}`);
           return;
         }
         workerData = newWorker;
+        console.log('✨ [디버깅] 신규 작업자 생성 완료:', workerData);
       }
 
       if (workerData) {
-        // ★ 핵심 해결: 경험치 리셋 로직을 삭제하고 DB에 저장된 EXP를 영구적으로 불러옵니다.
         setWorkerId(workerData.id);
         setLevel(workerData.level || 1);
         setExp(workerData.exp || 0);
 
-        // 2. 해당 계정의 과거 기록 100% 연동
-        const { data: reportsData } = await supabase
+        // 과거 기록 조회 쿼리 및 로그
+        console.log('🔍 [디버깅] inspections 테이블에서 worker_id로 조회 시도:', workerData.id);
+        const { data: reportsData, error: reportErr } = await supabase
           .from('inspections')
           .select('*')
           .eq('worker_id', workerData.id)
           .order('created_at', { ascending: false });
         
-        if (reportsData && reportsData.length > 0) {
+        console.log('🔍 [디버깅] inspections 조회 결과:', reportsData, reportErr);
+
+        if (reportsData) {
           setPastReports(reportsData);
-          
-          // 비정상 종료 데이터 복구 알림
-          for (const r of reportsData) {
-            const draft = localStorage.getItem(`kt_autosave_${r.id}`);
-            if (draft && draft !== r.ai_report_text) {
-              if (window.confirm('비정상 종료로 인해 저장되지 않은 이전 보고서가 발견되었습니다.\n지금 이어서 작성하시겠습니까?')) {
-                setReport(draft); setCurrentReportId(r.id); parseMarkdownToForm(draft); setIsEditing(true); break; 
-              } else {
-                localStorage.removeItem(`kt_autosave_${r.id}`);
-              }
-            }
-          }
         }
       }
     };
@@ -321,16 +316,21 @@ function DashboardContent() {
       
       await localforage.removeItem('pending_photos'); setFiles([]); setReport(resData.report);
       
+      console.log('💾 [디버깅] inspections 테이블에 저장 시도 중... worker_id:', workerId);
       const { data: insertedData, error: dbError } = await supabase.from('inspections').insert([
         { worker_id: workerId, image_url: imageUrlsString, ai_report_text: resData.report, status: '완료' }
       ]).select().single();
       
-      if (dbError) throw new Error(`DB 저장 실패: ${dbError.message}`);
+      if (dbError) {
+        console.error('❌ [디버깅] DB 저장 에러 발생:', dbError.message);
+        throw new Error(`DB 저장 실패: ${dbError.message}`);
+      }
 
+      console.log('✨ [디버깅] DB 저장 성공:', insertedData);
       if (insertedData) { setCurrentReportId(insertedData.id); setPastReports(prev => [insertedData, ...prev]); }
       
       const hasDanger = resData.report.includes('불량'); 
-      if (hasDanger) alert('⚠️ 위험 요소 발견! 보너스 10 EXP 추가 지급');
+      if (hasDanger) alert('⚠️️ 위험 요소 발견! 보너스 10 EXP 추가 지급');
       
       const gainedExp = (files.length * 5) + (hasDanger ? 10 : 0); 
       let tempExp = exp + gainedExp; let calcLevel = 1; let reqExp = 100;
