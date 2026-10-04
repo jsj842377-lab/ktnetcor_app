@@ -17,7 +17,6 @@ function DashboardContent() {
   const router = useRouter();
   const queryWorker = searchParams.get('worker');
 
-  // ★ 전역 테마 및 세션/EXP 컨텍스트 불러오기
   const { isDarkMode, toggleTheme, workerName, setWorkerName, level, exp, setExpAndLevel } = useTheme();
 
   const [workerId, setWorkerId] = useState<string | null>(null);
@@ -68,10 +67,16 @@ function DashboardContent() {
   };
 
   useEffect(() => {
-    let current = queryWorker || workerName;
-    if (queryWorker && ALLOWED_WORKERS.includes(queryWorker)) {
-      setWorkerName(queryWorker);
-      current = queryWorker;
+    // 1. 유령 계정 강제 추방 로직 (다른 브라우저 접속 버그 차단)
+    let current = queryWorker;
+    if (!current) {
+      current = localStorage.getItem('kt_current_worker');
+    }
+
+    if (!current || current === '작업자') {
+      alert('로그인 세션이 만료되었거나 정보가 없습니다. 다시 로그인해주세요.');
+      router.push('/');
+      return;
     }
 
     if (!ALLOWED_WORKERS.includes(current)) {
@@ -79,6 +84,9 @@ function DashboardContent() {
       router.push('/'); 
       return;
     }
+
+    setWorkerName(current);
+    localStorage.setItem('kt_current_worker', current);
 
     const savedGender = localStorage.getItem(`kt_gender_${current}`);
     if (savedGender === 'F') setGender('F');
@@ -88,7 +96,7 @@ function DashboardContent() {
       if (data && data.length > 0) setDbTips(data.map(item => item.content));
     };
     fetchTips();
-  }, [queryWorker, router, workerName, setWorkerName]);
+  }, [queryWorker, router, setWorkerName]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -115,7 +123,7 @@ function DashboardContent() {
     return () => { if (interval) clearInterval(interval); };
   }, [isEditing, currentReportId, report]);
 
-  // ★ 데이터 동기화 및 영구 보존 로직
+  // ★ 정상 계정 DB 동기화
   useEffect(() => {
     if (!workerName || workerName === '작업자') return;
 
@@ -127,11 +135,15 @@ function DashboardContent() {
           setPreviewUrls(savedFiles.map(file => URL.createObjectURL(file))); 
         }
 
-        let { data: workerData } = await supabase
+        // 중복 생성된 행이 있을 경우를 대비해 가장 최근 계정 1개만 안전하게 조회
+        const { data: workersList } = await supabase
           .from('workers')
           .select('*')
           .eq('worker_name', workerName)
-          .maybeSingle();
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        let workerData = workersList?.[0];
 
         if (!workerData) {
           const { data: newWorker } = await supabase
@@ -166,6 +178,26 @@ function DashboardContent() {
     const timer = setTimeout(() => setIsDataLoaded(true), 3000);
     return () => clearTimeout(timer);
   }, [workerName, setExpAndLevel]);
+
+  // 실시간 동기화 (기존 로직 유지)
+  useEffect(() => {
+    if (!workerId) return;
+
+    const channel = supabase
+      .channel('realtime-inspections')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'inspections', filter: `worker_id=eq.${workerId}` },
+        (payload) => {
+          if (payload.eventType === 'INSERT') setPastReports((prev) => [payload.new, ...prev]);
+          else if (payload.eventType === 'UPDATE') setPastReports((prev) => prev.map((item) => (item.id === payload.new.id ? payload.new : item)));
+          else if (payload.eventType === 'DELETE') setPastReports((prev) => prev.filter((item) => item.id !== payload.old.id));
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [workerId]);
 
   const parseMarkdownToForm = (mdText: string) => {
     const newForm = [...editForm];
@@ -295,20 +327,14 @@ function DashboardContent() {
     
     let currentWorkerId = workerId;
     if (!currentWorkerId) {
-      const { data: tempWorker } = await supabase.from('workers').select('id').eq('worker_name', workerName).maybeSingle();
+      const { data: tempWorker } = await supabase.from('workers').select('id').eq('worker_name', workerName).order('created_at', { ascending: false }).limit(1).single();
       if (tempWorker) {
         currentWorkerId = tempWorker.id;
         setWorkerId(tempWorker.id);
-      } else {
-        const { data: newW } = await supabase.from('workers').insert([{ worker_name: workerName, exp: 0, level: 1, password: '1234' }]).select().single();
-        if (newW) {
-          currentWorkerId = newW.id;
-          setWorkerId(newW.id);
-        }
       }
     }
 
-    if (!currentWorkerId) return alert('작업자 계정 연동 중 오류 발생');
+    if (!currentWorkerId) return alert('작업자 계정 연동 중 오류 발생. 새로고침 후 다시 시도해주세요.');
 
     setAnalyzing(true); setReport(null); setIsEditing(false);
     try {

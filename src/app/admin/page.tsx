@@ -1,198 +1,128 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/utils/supabase';
-import * as XLSX from 'xlsx-js-style';
 import { useRouter } from 'next/navigation';
+import { supabase } from '@/utils/supabase';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { useTheme } from '@/context/ThemeContext';
 
 export default function AdminPage() {
   const router = useRouter();
-  const [inspections, setInspections] = useState<any[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [progress, setProgress] = useState<number>(0);
-  
-  // 탭 상태 추가 (dashboard, tips, settings)
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tips' | 'settings'>('dashboard');
+  const { isDarkMode, toggleTheme } = useTheme();
 
-  const [viewMode, setViewMode] = useState<'month' | 'quarter'>('month');
-  const [selectedMonth, setSelectedMonth] = useState<string>('2026-10');
-  const [selectedYear, setSelectedYear] = useState<string>('2026');
-  const [selectedQuarter, setSelectedQuarter] = useState<number>(4);
+  const [workers, setWorkers] = useState<any[]>([]);
+  const [reports, setReports] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const [tips, setTips] = useState<any[]>([]);
-  const [newTip, setNewTip] = useState<string>('');
-
-  // 비밀번호 변경용 상태
-  const [oldPwd, setOldPwd] = useState('');
-  const [newPwd, setNewPwd] = useState('');
-
-  const fetchTips = async () => {
-    const { data } = await supabase.from('safety_tips').select('*').order('created_at', { ascending: false });
-    if (data) setTips(data);
-  };
-
-  const handleAddTip = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTip.trim()) return;
-    await supabase.from('safety_tips').insert([{ content: newTip, is_active: true }]);
-    setNewTip(''); fetchTips();
-  };
-
-  const toggleTipActive = async (id: number, currentStatus: boolean) => {
-    await supabase.from('safety_tips').update({ is_active: !currentStatus }).eq('id', id);
-    fetchTips();
-  };
-
-  const deleteTip = async (id: number) => {
-    if(window.confirm('완전히 삭제하시겠습니까?')) {
-      await supabase.from('safety_tips').delete().eq('id', id);
-      fetchTips();
-    }
-  };
-
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!oldPwd || !newPwd) return alert('모두 입력해주세요.');
-    const { data } = await supabase.from('workers').select('password').eq('worker_name', '전현진').single();
-    if (data?.password !== oldPwd) return alert('현재 비밀번호가 틀립니다.');
-    
-    await supabase.from('workers').update({ password: newPwd }).eq('worker_name', '전현진');
-    alert('비밀번호가 성공적으로 변경되었습니다.');
-    setOldPwd(''); setNewPwd('');
+  // 직사각형 UI 및 다크모드 테마 색상 적용
+  const theme = isDarkMode ? {
+    bg: '#0f172a', cardBg: '#1e293b', textMain: '#f8fafc', textSub: '#94a3b8',
+    border: '#334155', inputBg: '#0f172a', mdTableHead: '#334155', btnCancel: '#334155'
+  } : {
+    bg: '#f8fafc', cardBg: '#ffffff', textMain: '#0f172a', textSub: '#475569',
+    border: '#cbd5e1', inputBg: '#f8fafc', mdTableHead: '#f1f5f9', btnCancel: '#e2e8f0'
   };
 
   useEffect(() => {
-    if (activeTab === 'tips') { fetchTips(); return; }
-    if (activeTab === 'settings') return;
+    const fetchAdminData = async () => {
+      setLoading(true);
 
-    const fetchData = async () => {
-      setLoading(true); setProgress(10);
-      let startDate: Date, endDate: Date;
-      if (viewMode === 'month') {
-        startDate = new Date(`${selectedMonth}-01T00:00:00.000Z`);
-        endDate = new Date(startDate); endDate.setMonth(endDate.getMonth() + 1);
-      } else {
-        const startMonth = String((selectedQuarter - 1) * 3 + 1).padStart(2, '0');
-        startDate = new Date(`${selectedYear}-${startMonth}-01T00:00:00.000Z`);
-        endDate = new Date(startDate); endDate.setMonth(endDate.getMonth() + 3);
+      // 1. 모든 작업자 정보 조회 (레벨 및 경험치 높은 순 정렬)
+      const { data: workersData } = await supabase
+        .from('workers')
+        .select('*')
+        .neq('worker_name', '작업자') // 유령 계정 제외
+        .order('level', { ascending: false })
+        .order('exp', { ascending: false });
+
+      if (workersData) {
+        // 이름 기준 중복 제거 (과거 버그로 생성된 중복 계정 찌꺼기 방지)
+        const uniqueWorkers = Array.from(new Map(workersData.map(item => [item.worker_name, item])).values());
+        setWorkers(uniqueWorkers);
       }
-      setProgress(40);
-      const { data } = await supabase.from('inspections').select(`*, workers ( worker_name )`).gte('created_at', startDate.toISOString()).lt('created_at', endDate.toISOString()).order('created_at', { ascending: true });
-      setProgress(80);
-      if (data) setInspections(data);
-      setProgress(100); setTimeout(() => setLoading(false), 500);
+
+      // 2. 전체 점검 보고서 조회 (작업자 이름 매핑)
+      const { data: reportsData } = await supabase
+        .from('inspections')
+        .select(`
+          *,
+          workers ( worker_name, level )
+        `)
+        .order('created_at', { ascending: false });
+
+      if (reportsData) setReports(reportsData);
+      setLoading(false);
     };
-    fetchData();
-  }, [viewMode, selectedMonth, selectedYear, selectedQuarter, activeTab]);
 
-  const exportToExcel = async () => { /* 기존 엑셀 추출 로직 동일 (분량상 생략 없이 유지 필요하나, 핵심 기능이므로 유지) */
-    if (inspections.length === 0) return alert('기록이 없습니다.');
-    setLoading(true); setProgress(20); await new Promise(r => setTimeout(r, 100)); setProgress(50);
-    const headerStyle = { fill: { fgColor: { rgb: "E2E8F0" } }, font: { name: 'Pretendard', bold: true }, alignment: { horizontal: "center", vertical: "center" }, border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } } };
-    const centerStyle = { font: { name: 'Pretendard' }, alignment: { horizontal: "center", vertical: "center" } };
-    const companySet = new Set<string>(); const dateMap = new Map(); const monthMap = new Map(); const detailRows: any[] = [];
-    const extractMatch = (text: string, key: string) => (text.match(new RegExp(`\\|\\s*\\*\\*${key}\\*\\*\\s*\\|\\s*([^\\|]+)\\s*\\|`)) || [])[1]?.trim() || '';
+    fetchAdminData();
+  }, []);
 
-    inspections.forEach((item) => {
-      const d = new Date(item.created_at); const yyyyMmDd = d.toISOString().slice(0, 10); const yyyyMm = `${d.getFullYear()}년 ${d.getMonth() + 1}월`;
-      const txt = item.ai_report_text || ''; const pNum = extractMatch(txt, '공사번호') || '미분류'; const cName = pNum.split('-')[0] || '미상'; const isDgr = txt.includes('불량') ? 'X' : 'O';
-      companySet.add(cName); if (!dateMap.has(yyyyMmDd)) dateMap.set(yyyyMmDd, {}); dateMap.get(yyyyMmDd)[cName] = isDgr === 'X' ? '△' : 'O';
-      if (!monthMap.has(yyyyMm)) monthMap.set(yyyyMm, {}); monthMap.get(yyyyMm)[cName] = 'O';
-      detailRows.push([{ v: yyyyMmDd, s: centerStyle }, { v: d.getHours() < 12 ? '오전' : '오후', s: centerStyle }, { v: item.workers?.worker_name || '알수없음', s: centerStyle }, { v: cName, s: centerStyle }, { v: pNum, s: centerStyle }, { v: extractMatch(txt, '작업공정'), s: centerStyle }, { v: isDgr, s: centerStyle }]);
-    });
-    setProgress(80); await new Promise(r => setTimeout(r, 100)); 
-    const comps = Array.from(companySet); const hds = ['', ...comps].map(t => ({ v: t, s: headerStyle }));
-    const s1Data: any[][] = [[{ v: '자재 실사', s: { font: { name: 'Pretendard', bold: true } } }], hds];
-    Array.from(monthMap.keys()).forEach(m => s1Data.push([{ v: m, s: centerStyle }, ...comps.map(c => ({ v: monthMap.get(m)[c] || '-', s: centerStyle }))]));
-    s1Data.push([], [{ v: '안전점검', s: { font: { name: 'Pretendard', bold: true } } }], hds);
-    Array.from(dateMap.keys()).forEach(d => s1Data.push([{ v: d, s: centerStyle }, ...comps.map(c => ({ v: dateMap.get(d)[c] || '-', s: centerStyle }))]));
-    const s2Data = [['점검일자', '시간', '인원', '협력사', '공사번호', '공사유형', '안전작업 이행 여부'].map(t => ({ v: t, s: headerStyle })), ...detailRows];
-    const wb = XLSX.utils.book_new(); const ws1 = XLSX.utils.aoa_to_sheet(s1Data); const ws2 = XLSX.utils.aoa_to_sheet(s2Data);
-    ws1['!cols'] = [{ wch: 15 }, ...comps.map(() => ({ wch: 15 }))]; ws2['!cols'] = [{ wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 25 }, { wch: 20 }, { wch: 20 }];
-    const prefix = viewMode === 'month' ? selectedMonth : `${selectedYear}년_${selectedQuarter}분기`;
-    XLSX.utils.book_append_sheet(wb, ws1, `${prefix}_협력사관리`.substring(0, 31)); XLSX.utils.book_append_sheet(wb, ws2, `${prefix}_세부이력`.substring(0, 31));
-    XLSX.writeFile(wb, `안전점검_${prefix}.xlsx`);
-    setProgress(100); setTimeout(() => setLoading(false), 500);
+  const mdComps = {
+    table: (props: any) => <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px', border: `1px solid ${theme.border}` }} {...props} /></div>,
+    th: (props: any) => <th style={{ border: `1px solid ${theme.border}`, background: theme.mdTableHead, padding: '10px', textAlign: 'center', fontSize: '13px', color: theme.textMain }} {...props} />,
+    td: (props: any) => <td style={{ border: `1px solid ${theme.border}`, padding: '10px', fontSize: '13px', textAlign: 'center', color: theme.textMain }} {...props} />,
   };
 
+  if (loading) return <div style={{ padding: '60px', textAlign: 'center', fontFamily: "'Pretendard', sans-serif" }}>관리자 데이터를 불러오는 중입니다...</div>;
+
   return (
-    <div style={{ padding: '40px', maxWidth: '800px', margin: '0 auto', background: '#f8fafc', minHeight: '100vh', fontFamily: "'Pretendard', sans-serif" }}>
-      {loading && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'white', padding: '30px', borderRadius: '16px', textAlign: 'center', width: '300px' }}>
-            <h3>데이터 처리 중...</h3>
-            <div style={{ background: '#e2e8f0', borderRadius: '8px', height: '16px', marginTop: '10px' }}>
-              <div style={{ width: `${progress}%`, background: '#2563eb', height: '100%', transition: 'width 0.3s' }} />
-            </div>
-            <p>{progress}%</p>
-          </div>
+    <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '24px', fontFamily: "'Pretendard', sans-serif" }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+        <h1 style={{ margin: 0, color: theme.textMain, fontSize: '24px' }}>🛡️ 시스템 관리자 대시보드</h1>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button onClick={toggleTheme} style={{ padding: '10px 16px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>
+            {isDarkMode ? '☀️ 라이트 모드' : '🌙 다크 모드'}
+          </button>
+          <button onClick={() => router.push('/')} style={{ padding: '10px 16px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>
+            메인으로
+          </button>
         </div>
-      )}
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h1 style={{ margin: 0 }}>👨‍💼 관리자 대시보드</h1>
-        <button onClick={() => router.push('/')} style={{ padding: '8px 16px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>로그아웃</button>
       </div>
-      
-      <div style={{ background: 'white', padding: '30px', borderRadius: '16px', boxShadow: '0 10px 25px rgba(0,0,0,0.05)' }}>
-        <div style={{ display: 'flex', borderBottom: '2px solid #e2e8f0', marginBottom: '20px' }}>
-          <button onClick={() => setActiveTab('dashboard')} style={{ padding: '12px 24px', background: 'none', border: 'none', borderBottom: activeTab === 'dashboard' ? '3px solid #2563eb' : 'none', fontWeight: activeTab === 'dashboard' ? 'bold' : 'normal', color: activeTab === 'dashboard' ? '#2563eb' : '#64748b', cursor: 'pointer', fontSize: '16px' }}>보고서 추출</button>
-          <button onClick={() => setActiveTab('tips')} style={{ padding: '12px 24px', background: 'none', border: 'none', borderBottom: activeTab === 'tips' ? '3px solid #2563eb' : 'none', fontWeight: activeTab === 'tips' ? 'bold' : 'normal', color: activeTab === 'tips' ? '#2563eb' : '#64748b', cursor: 'pointer', fontSize: '16px' }}>명언 관리</button>
-          <button onClick={() => setActiveTab('settings')} style={{ padding: '12px 24px', background: 'none', border: 'none', borderBottom: activeTab === 'settings' ? '3px solid #2563eb' : 'none', fontWeight: activeTab === 'settings' ? 'bold' : 'normal', color: activeTab === 'settings' ? '#2563eb' : '#64748b', cursor: 'pointer', fontSize: '16px' }}>설정 (비밀번호)</button>
-        </div>
 
-        {activeTab === 'dashboard' && (
-          <>
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-              <button onClick={() => setViewMode('month')} style={{ flex: 1, padding: '10px', background: viewMode === 'month' ? '#2563eb' : '#f8fafc', color: viewMode === 'month' ? '#fff' : '#000', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer' }}>월별 조회</button>
-              <button onClick={() => setViewMode('quarter')} style={{ flex: 1, padding: '10px', background: viewMode === 'quarter' ? '#2563eb' : '#f8fafc', color: viewMode === 'quarter' ? '#fff' : '#000', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer' }}>분기별 조회</button>
-            </div>
-            <div style={{ background: '#f1f5f9', padding: '20px', borderRadius: '12px' }}>
-              {viewMode === 'month' ? (
-                <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
-              ) : (
-                <>
-                  <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} style={{ padding: '10px', marginRight: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
-                    <option value="2025">2025년</option><option value="2026">2026년</option><option value="2027">2027년</option>
-                  </select>
-                  <select value={selectedQuarter} onChange={e => setSelectedQuarter(Number(e.target.value))} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
-                    <option value={1}>1분기</option><option value={2}>2분기</option><option value={3}>3분기</option><option value={4}>4분기</option>
-                  </select>
-                </>
-              )}
-            </div>
-            <button onClick={exportToExcel} style={{ width: '100%', padding: '15px', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', marginTop: '20px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>엑셀 다운로드 (총 {inspections.length}건)</button>
-          </>
-        )}
-
-        {activeTab === 'tips' && (
-          <>
-            <form onSubmit={handleAddTip} style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-              <input type="text" value={newTip} onChange={e => setNewTip(e.target.value)} placeholder="새로운 안전 명언 입력" style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
-              <button type="submit" style={{ padding: '0 20px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>추가하기</button>
-            </form>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {tips.map(tip => (
-                <div key={tip.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', background: tip.is_active ? '#f8fafc' : '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: '8px', opacity: tip.is_active ? 1 : 0.5 }}>
-                  <span style={{ fontSize: '15px', color: '#1e293b' }}>{tip.content}</span>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button onClick={() => toggleTipActive(tip.id, tip.is_active)} style={{ padding: '8px 12px', background: tip.is_active ? '#eab308' : '#10b981', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>{tip.is_active ? '숨기기' : '노출하기'}</button>
-                    <button onClick={() => deleteTip(tip.id)} style={{ padding: '8px 12px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>삭제</button>
-                  </div>
-                </div>
+      {/* 작업자 레벨 리더보드 */}
+      <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '0', padding: '20px', marginBottom: '32px' }}>
+        <h2 style={{ margin: '0 0 16px 0', color: theme.textMain, fontSize: '18px' }}>🏆 작업자 레벨 현황</h2>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={{ border: `1px solid ${theme.border}`, background: theme.mdTableHead, padding: '12px', color: theme.textMain }}>순위</th>
+                <th style={{ border: `1px solid ${theme.border}`, background: theme.mdTableHead, padding: '12px', color: theme.textMain }}>작업자 성명</th>
+                <th style={{ border: `1px solid ${theme.border}`, background: theme.mdTableHead, padding: '12px', color: theme.textMain }}>현재 레벨</th>
+                <th style={{ border: `1px solid ${theme.border}`, background: theme.mdTableHead, padding: '12px', color: theme.textMain }}>누적 경험치(EXP)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {workers.map((w, idx) => (
+                <tr key={w.id} style={{ background: idx === 0 ? 'rgba(250, 204, 21, 0.1)' : 'transparent' }}>
+                  <td style={{ border: `1px solid ${theme.border}`, padding: '12px', textAlign: 'center', color: theme.textMain, fontWeight: 'bold' }}>{idx + 1}위</td>
+                  <td style={{ border: `1px solid ${theme.border}`, padding: '12px', textAlign: 'center', color: theme.textMain, fontWeight: 'bold' }}>{w.worker_name}</td>
+                  <td style={{ border: `1px solid ${theme.border}`, padding: '12px', textAlign: 'center', color: '#2563eb', fontWeight: 'bold' }}>Lv.{w.level}</td>
+                  <td style={{ border: `1px solid ${theme.border}`, padding: '12px', textAlign: 'center', color: theme.textSub }}>{w.exp} EXP</td>
+                </tr>
               ))}
-            </div>
-          </>
-        )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-        {activeTab === 'settings' && (
-          <form onSubmit={handleChangePassword} style={{ background: '#f8fafc', padding: '30px', borderRadius: '12px' }}>
-            <h3 style={{ margin: '0 0 20px 0' }}>관리자 비밀번호 변경</h3>
-            <input type="password" placeholder="현재 비밀번호" value={oldPwd} onChange={e => setOldPwd(e.target.value)} style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-            <input type="password" placeholder="새 비밀번호" value={newPwd} onChange={e => setNewPwd(e.target.value)} style={{ width: '100%', padding: '12px', marginBottom: '20px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-            <button type="submit" style={{ width: '100%', padding: '12px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>비밀번호 변경 저장</button>
-          </form>
-        )}
+      {/* 전체 보고서 현황 */}
+      <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '0', padding: '20px' }}>
+        <h2 style={{ margin: '0 0 16px 0', color: theme.textMain, fontSize: '18px' }}>📋 전체 현장 점검 기록 ({reports.length}건)</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
+          {reports.map((report) => (
+            <div key={report.id} style={{ border: `1px solid ${theme.border}`, padding: '16px', borderRadius: '0', background: theme.bg }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px' }}>
+                <strong style={{ color: '#2563eb' }}>{report.workers?.worker_name} (Lv.{report.workers?.level})</strong>
+                <span style={{ fontSize: '12px', color: theme.textSub }}>{new Date(report.created_at).toLocaleDateString()}</span>
+              </div>
+              <div style={{ maxHeight: '150px', overflowY: 'auto', fontSize: '13px' }}>
+                <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report.ai_report_text}</ReactMarkdown>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
