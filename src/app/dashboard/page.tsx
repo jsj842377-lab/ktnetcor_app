@@ -19,9 +19,6 @@ function DashboardContent() {
 
   const { isDarkMode, toggleTheme } = useTheme();
 
-  const currentYear = new Date().getFullYear();
-  const currentQuarter = Math.floor(new Date().getMonth() / 3) + 1;
-
   const [workerId, setWorkerId] = useState<string | null>(null);
   const [level, setLevel] = useState<number>(1);
   const [exp, setExp] = useState<number>(0);
@@ -114,22 +111,49 @@ function DashboardContent() {
       const savedFiles = await localforage.getItem<File[]>('pending_photos');
       if (savedFiles && savedFiles.length > 0) { setFiles(savedFiles); setPreviewUrls(savedFiles.map(file => URL.createObjectURL(file))); }
     };
+    
     const fetchWorkerData = async () => {
-      let { data: workerData } = await supabase.from('workers').select('*').eq('worker_name', workerName).order('created_at', { ascending: false }).limit(1).single();
+      // 1. 작업자 계정 정보 불러오기
+      let { data: workerData } = await supabase
+        .from('workers')
+        .select('*')
+        .eq('worker_name', workerName)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
       
-      // ★ 작업자 정보가 DB에 없을 경우 즉시 경고창을 띄워 인지시킴
+      // ★ 핵심 해결: DB에 내 이름이 없으면 튕겨내지 않고 즉시 신규 계정을 자동 생성합니다.
       if (!workerData) {
-        alert(`DB 오류: 'workers' 테이블에 '${workerName}'님의 데이터가 존재하지 않아 기록을 불러오거나 저장할 수 없습니다.`);
-        return;
+        const { data: newWorker, error: createError } = await supabase
+          .from('workers')
+          .insert([{ worker_name: workerName, exp: 0, level: 1, password: '1234' }])
+          .select()
+          .single();
+          
+        if (createError) {
+          alert('데이터베이스 연결 오류가 발생했습니다. RLS 설정을 확인해주세요.');
+          return;
+        }
+        workerData = newWorker;
       }
 
       if (workerData) {
-        const { data: reportsData } = await supabase.from('inspections').select('*').eq('worker_id', workerData.id).order('created_at', { ascending: false });
-        let lastActiveDate = new Date(workerData.created_at);
+        // ★ 핵심 해결: 경험치 리셋 로직을 삭제하고 DB에 저장된 EXP를 영구적으로 불러옵니다.
+        setWorkerId(workerData.id);
+        setLevel(workerData.level || 1);
+        setExp(workerData.exp || 0);
+
+        // 2. 해당 계정의 과거 기록 100% 연동
+        const { data: reportsData } = await supabase
+          .from('inspections')
+          .select('*')
+          .eq('worker_id', workerData.id)
+          .order('created_at', { ascending: false });
+        
         if (reportsData && reportsData.length > 0) {
-          const lastReportDate = new Date(reportsData[0].created_at);
-          if (lastReportDate > lastActiveDate) lastActiveDate = lastReportDate;
+          setPastReports(reportsData);
           
+          // 비정상 종료 데이터 복구 알림
           for (const r of reportsData) {
             const draft = localStorage.getItem(`kt_autosave_${r.id}`);
             if (draft && draft !== r.ai_report_text) {
@@ -141,22 +165,11 @@ function DashboardContent() {
             }
           }
         }
-        
-        const lastActiveYear = lastActiveDate.getFullYear(); const lastActiveQuarter = Math.floor(lastActiveDate.getMonth() / 3) + 1;
-        if (currentYear > lastActiveYear || (currentYear === lastActiveYear && currentQuarter > lastActiveQuarter)) {
-          if (workerData.exp > 0 || workerData.level > 1) {
-            workerData.exp = 0; workerData.level = 1;
-            await supabase.from('workers').update({ exp: 0, level: 1 }).eq('id', workerData.id);
-            alert(`🎉 새로운 시즌(${currentYear}년 ${currentQuarter}분기) 시작! 레벨 초기화`);
-          }
-        }
-        setWorkerId(workerData.id); setLevel(workerData.level); setExp(workerData.exp);
-        if (reportsData) setPastReports(reportsData);
       }
     };
     loadPendingPhotos();
     if (workerName && ALLOWED_WORKERS.includes(workerName)) fetchWorkerData();
-  }, [workerName, currentYear, currentQuarter]);
+  }, [workerName]);
 
   const parseMarkdownToForm = (mdText: string) => {
     const newForm = [...editForm];
@@ -275,9 +288,8 @@ function DashboardContent() {
   const handleUploadAndAnalyze = async () => {
     if (files.length === 0) return alert('사진을 추가해주세요!');
     
-    // ★ 에러 원천 차단: workerId가 없으면 AI 분석 비용을 낭비하지 않고 여기서 중단시킴
     if (!workerId) {
-      return alert(`DB 오류: '${workerName}'님의 작업자 ID를 찾을 수 없습니다. DB의 workers 테이블을 확인해주세요.`);
+      return alert(`DB 연동 대기중입니다. 새로고침(F5) 후 다시 시도해주세요.`);
     }
 
     setAnalyzing(true); setReport(null); setIsEditing(false);
@@ -360,7 +372,6 @@ function DashboardContent() {
 
       {showSettingsModal && (
         <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.8)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          {/* ★ borderRadius '0' 적용 (직사각형 UI) */}
           <form onSubmit={handleChangePassword} style={{ background: theme.cardBg, padding: '30px', borderRadius: '0', width: '90%', maxWidth: '320px', boxSizing: 'border-box', border: `1px solid ${theme.border}` }}>
             <h3 style={{ margin: '0 0 20px 0', textAlign: 'center', color: theme.textMain }}>비밀번호 변경</h3>
             <input type="password" placeholder="현재 비밀번호" value={oldPwd} onChange={e => setOldPwd(e.target.value)} style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
