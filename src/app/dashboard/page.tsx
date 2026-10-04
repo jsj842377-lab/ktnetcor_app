@@ -42,7 +42,6 @@ function DashboardContent() {
   const [showPast, setShowPast] = useState<boolean>(false);
   const [showLevelUpModal, setShowLevelUpModal] = useState<boolean>(false);
   
-  // 비밀번호 설정 모달창 관련 상태
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [oldPwd, setOldPwd] = useState('');
   const [newPwd, setNewPwd] = useState('');
@@ -147,7 +146,7 @@ function DashboardContent() {
     await localforage.setItem('pending_photos', newFiles); setFiles(newFiles); setPreviewUrls(newFiles.map(f => URL.createObjectURL(f)));
   };
 
-  const handleUploadAndAnalyze = async () => { /* AI 백엔드 통신 및 EXP 증가 로직(기존 동일) */
+  const handleUploadAndAnalyze = async () => {
     if (files.length === 0) return alert('사진을 추가해주세요!');
     setAnalyzing(true); setReport(null); setIsEditing(false);
     try {
@@ -194,11 +193,18 @@ function DashboardContent() {
 
   return (
     <div style={{ maxWidth: '640px', margin: '0 auto', padding: '16px', fontFamily: "'Pretendard', sans-serif" }}>
+      {/* ★ PDF 인쇄용 CSS 강화 (사진 잘림 방지, 100% 렌더링) */}
       <style dangerouslySetInnerHTML={{ __html: `
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes fadeInOut { 0% { opacity: 0; transform: translateY(10px); } 20% { opacity: 1; transform: translateY(0); } 80% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-10px); } }
-        @media print { body, .print-target, .print-target * { font-family: 'Pretendard', sans-serif !important; visibility: visible; } body * { visibility: hidden; } .print-target { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } }
+        @media print { 
+          body, .print-target, .print-target * { font-family: 'Pretendard', sans-serif !important; visibility: visible; } 
+          body * { visibility: hidden; } 
+          .print-target { position: absolute; left: 0; top: 0; width: 100%; } 
+          .no-print { display: none !important; } 
+          img { page-break-inside: avoid; max-width: 100% !important; border: none !important; }
+        }
       `}} />
 
       {/* 설정 모달 (비밀번호 변경) */}
@@ -248,7 +254,6 @@ function DashboardContent() {
           </div>
         </div>
         
-        {/* 버튼 영역 (설정 & 로그아웃) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <button onClick={() => setShowSettingsModal(true)} style={{ padding: '6px 8px', background: '#e2e8f0', color: '#1e293b', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>⚙️ 설정</button>
           <button onClick={handleLogout} style={{ padding: '6px 8px', background: '#ef4444', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '12px' }}>로그아웃</button>
@@ -281,7 +286,18 @@ function DashboardContent() {
             <div className="no-print"><textarea value={report} onChange={e => setReport(e.target.value)} style={{ width: '100%', minHeight: '300px', padding: '10px', boxSizing: 'border-box' }} /><button onClick={handleUpdateReport} style={{ width: '100%', padding: '12px', background: '#3b82f6', color: 'white', marginTop: '10px', border: 'none' }}>저장</button></div>
           ) : (
             <>
-              <div ref={reportRef}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown></div>
+              {/* ★ 새 보고서 인쇄 시 사진을 PDF 영역(.print-target) 내부에 강제 포함 */}
+              <div ref={reportRef}>
+                <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
+                {previewUrls.length > 0 && (
+                  <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <h4 style={{ width: '100%', borderBottom: '1px solid #000', paddingBottom: '8px', margin: '20px 0 10px 0' }}>📸 현장 사진 (첨부)</h4>
+                    {previewUrls.map((url, i) => (
+                      <img key={i} src={url} alt="첨부사진" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #e2e8f0' }} />
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="no-print" style={{ display: 'flex', gap: '10px', marginTop: '20px' }}><button onClick={() => setIsEditing(true)} style={{ flex: 1, padding: '12px' }}>수정</button><button onClick={() => window.print()} style={{ flex: 1, padding: '12px', background: '#10b981', color: 'white', border: 'none' }}>PDF 인쇄</button></div>
             </>
           )}
@@ -297,7 +313,9 @@ function DashboardContent() {
                 <div style={{ color: '#2563eb', fontWeight: 'bold', marginBottom: '10px' }}>{new Date(item.created_at).toLocaleString()}</div>
                 {item.image_url && <img src={item.image_url} alt="사진" style={{ width: '100%', height: '150px', objectFit: 'cover', borderRadius: '8px', marginBottom: '10px' }} />}
                 <div style={{ maxHeight: '150px', overflowY: 'auto', background: '#f8fafc', padding: '10px', borderRadius: '8px' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown></div>
-                <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 100); }} style={{ width: '100%', marginTop: '10px', padding: '10px', background: '#1e293b', color: 'white', border: 'none', borderRadius: '8px' }}>인쇄</button>
+                
+                {/* ★ 과거 보고서 인쇄 시 브라우저가 사진을 렌더링할 시간을 충분히 벌어주기 위해 딜레이를 100ms -> 600ms로 증가 */}
+                <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 600); }} style={{ width: '100%', marginTop: '10px', padding: '10px', background: '#1e293b', color: 'white', border: 'none', borderRadius: '8px' }}>인쇄</button>
               </div>
             ))}
           </div>
@@ -307,7 +325,7 @@ function DashboardContent() {
       {printItem && (
         <div className="print-target" style={{ padding: '20px', background: 'white' }}>
           <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown>
-          {printItem.image_url && <img src={printItem.image_url} alt="사진" style={{ width: '100%', maxHeight: '300px', objectFit: 'contain', marginTop: '20px' }} />}
+          {printItem.image_url && <img src={printItem.image_url} alt="사진" style={{ width: '100%', maxHeight: '400px', objectFit: 'contain', marginTop: '20px' }} />}
         </div>
       )}
     </div>
