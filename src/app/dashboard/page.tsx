@@ -38,6 +38,9 @@ function DashboardContent() {
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [currentReportId, setCurrentReportId] = useState<string | null>(null);
   
+  // ★ 자동 저장 시간을 화면에 보여주기 위한 상태
+  const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
+  
   const [pastReports, setPastReports] = useState<any[]>([]);
   const [showPast, setShowPast] = useState<boolean>(false);
   const [showLevelUpModal, setShowLevelUpModal] = useState<boolean>(false);
@@ -71,6 +74,22 @@ function DashboardContent() {
     }
     return () => { if (interval) clearInterval(interval); };
   }, [analyzing, dbTips]);
+
+  // ★ 에디터 5초 주기 자동 저장 로직 (localStorage 활용)
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isEditing && report && currentReportId) {
+      interval = setInterval(() => {
+        localStorage.setItem(`kt_autosave_${currentReportId}`, report);
+        const now = new Date();
+        const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+        setLastSavedTime(`${timeStr} 자동 저장됨`);
+      }, 5000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isEditing, report, currentReportId]);
 
   useEffect(() => {
     const loadPendingPhotos = async () => {
@@ -108,6 +127,7 @@ function DashboardContent() {
     const newGender = gender === 'M' ? 'F' : 'M';
     setGender(newGender); localStorage.setItem(`kt_gender_${workerName}`, newGender);
   };
+  
   const getCharacterEmoji = () => {
     if (level === 1) return '🐣'; if (level < 3) return gender === 'M' ? '👦' : '👧';
     return gender === 'M' ? '👨‍🔧' : '👩‍🔧';
@@ -174,11 +194,41 @@ function DashboardContent() {
     } catch (err: any) { alert(`오류: ${err.message}`); } finally { setAnalyzing(false); }
   };
 
+  // ★ 수정 시작 시 자동 저장된 찌꺼기가 있는지 검사하고 복구 알림
+  const handleStartEdit = () => {
+    if (currentReportId) {
+      const draft = localStorage.getItem(`kt_autosave_${currentReportId}`);
+      if (draft && draft !== report) {
+        if (window.confirm('이전에 작성하다 중단된 자동 저장 내용이 있습니다. 복구하시겠습니까?')) {
+          setReport(draft);
+        }
+      }
+    }
+    setIsEditing(true);
+    setLastSavedTime(null);
+  };
+
+  // ★ 수정 완료 시 DB 저장 및 임시 저장소 비우기
   const handleUpdateReport = async () => {
     setIsEditing(false); 
     if (currentReportId && report) {
       await supabase.from('inspections').update({ ai_report_text: report }).eq('id', currentReportId);
       setPastReports(prev => prev.map(item => item.id === currentReportId ? { ...item, ai_report_text: report } : item));
+      localStorage.removeItem(`kt_autosave_${currentReportId}`); // 성공적으로 저장했으므로 임시 파일 파기
+      setLastSavedTime(null);
+    }
+  };
+
+  // ★ 수정 취소 시 임시 저장소 비우고 원본 텍스트로 복귀
+  const handleCancelEdit = () => {
+    if (window.confirm('수정을 취소하시겠습니까? 저장되지 않은 내용은 사라집니다.')) {
+      setIsEditing(false);
+      setLastSavedTime(null);
+      if (currentReportId) {
+        localStorage.removeItem(`kt_autosave_${currentReportId}`);
+        const originalItem = pastReports.find(item => item.id === currentReportId);
+        if (originalItem) setReport(originalItem.ai_report_text);
+      }
     }
   };
 
@@ -282,42 +332,30 @@ function DashboardContent() {
         <div className={printItem ? "no-print" : "print-target"} style={{ marginTop: '20px', padding: '20px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
           {isEditing ? (
             <div className="no-print" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {/* ★ 개선된 다크모드 + 고정폭 폰트 에디터 */}
               <div style={{ background: '#1e293b', padding: '16px', borderRadius: '12px', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)' }}>
+                {/* ★ 자동 저장 표시등 추가 */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                   <h4 style={{ color: '#60a5fa', margin: 0, fontSize: '14px' }}>💻 보고서 직접 수정 (조치사항 입력)</h4>
+                  {lastSavedTime && <span style={{ fontSize: '12px', color: '#10b981', fontWeight: 'bold' }}>✓ {lastSavedTime}</span>}
                 </div>
                 <textarea 
                   value={report} 
                   onChange={e => setReport(e.target.value)} 
                   style={{ 
-                    width: '100%', 
-                    minHeight: '300px', 
-                    padding: '12px', 
-                    boxSizing: 'border-box',
-                    fontFamily: "'Consolas', 'Courier New', monospace", /* 표 정렬을 위한 핵심 설정 */
-                    fontSize: '14px',
-                    lineHeight: '1.6',
-                    background: 'transparent',
-                    color: '#f8fafc',
-                    border: '1px solid #334155',
-                    borderRadius: '8px',
-                    outline: 'none',
-                    resize: 'vertical'
+                    width: '100%', minHeight: '300px', padding: '12px', boxSizing: 'border-box',
+                    fontFamily: "'Consolas', 'Courier New', monospace", fontSize: '14px', lineHeight: '1.6',
+                    background: 'transparent', color: '#f8fafc', border: '1px solid #334155', borderRadius: '8px', outline: 'none', resize: 'vertical'
                   }} 
                 />
               </div>
 
-              {/* ★ 실시간 미리보기 뷰어 */}
               <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
                 <h4 style={{ margin: '0 0 12px 0', color: '#475569', fontSize: '14px', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>👀 실시간 미리보기</h4>
-                <div style={{ pointerEvents: 'none' }}>
-                  <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
-                </div>
+                <div style={{ pointerEvents: 'none' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown></div>
               </div>
 
               <div style={{ display: 'flex', gap: '10px' }}>
-                <button onClick={() => setIsEditing(false)} style={{ flex: 1, padding: '14px', background: '#e2e8f0', color: '#1e293b', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>취소</button>
+                <button onClick={handleCancelEdit} style={{ flex: 1, padding: '14px', background: '#e2e8f0', color: '#1e293b', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>취소</button>
                 <button onClick={handleUpdateReport} style={{ flex: 2, padding: '14px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>수정 내용 저장</button>
               </div>
             </div>
@@ -328,13 +366,14 @@ function DashboardContent() {
                 {previewUrls.length > 0 && (
                   <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                     <h4 style={{ width: '100%', borderBottom: '1px solid #000', paddingBottom: '8px', margin: '20px 0 10px 0' }}>📸 현장 사진 (첨부)</h4>
-                    {previewUrls.map((url, i) => (
-                      <img key={i} src={url} alt="첨부사진" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #e2e8f0' }} />
-                    ))}
+                    {previewUrls.map((url, i) => (<img key={i} src={url} alt="첨부사진" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '8px', border: '1px solid #e2e8f0' }} />))}
                   </div>
                 )}
               </div>
-              <div className="no-print" style={{ display: 'flex', gap: '10px', marginTop: '20px' }}><button onClick={() => setIsEditing(true)} style={{ flex: 1, padding: '12px', cursor: 'pointer', borderRadius: '8px', border: '1px solid #cbd5e1' }}>수정</button><button onClick={() => window.print()} style={{ flex: 1, padding: '12px', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>PDF 인쇄</button></div>
+              <div className="no-print" style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                <button onClick={handleStartEdit} style={{ flex: 1, padding: '12px', cursor: 'pointer', borderRadius: '8px', border: '1px solid #cbd5e1' }}>수정</button>
+                <button onClick={() => window.print()} style={{ flex: 1, padding: '12px', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>PDF 인쇄</button>
+              </div>
             </>
           )}
         </div>
@@ -349,7 +388,6 @@ function DashboardContent() {
                 <div style={{ color: '#2563eb', fontWeight: 'bold', marginBottom: '10px' }}>{new Date(item.created_at).toLocaleString()}</div>
                 {item.image_url && <img src={item.image_url} alt="사진" style={{ width: '100%', height: '150px', objectFit: 'cover', borderRadius: '8px', marginBottom: '10px' }} />}
                 <div style={{ maxHeight: '150px', overflowY: 'auto', background: '#f8fafc', padding: '10px', borderRadius: '8px' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown></div>
-                
                 <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 600); }} style={{ width: '100%', marginTop: '10px', padding: '10px', background: '#1e293b', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>인쇄</button>
               </div>
             ))}
