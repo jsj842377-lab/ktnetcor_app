@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
       'gemini-3-flash',
       'gemini-3-flash-preview',
       'gemini-3.0-flash',
+      ‘gemini-1.5-flash’
       process.env.GEMINI_MODEL?.trim()
     ].filter(Boolean) as string[];
 
