@@ -212,8 +212,6 @@ function DashboardContent() {
     if (!element) return;
     
     const html2pdf = (await import('html2pdf.js')).default;
-    
-    // ★ 에러 원천 차단: as const 를 사용하여 타입스크립트의 엄격한 타입 검사를 통과시킵니다.
     const opt = {
       margin: 10,
       filename: `안전점검보고서_${new Date().getTime()}.pdf`,
@@ -221,7 +219,6 @@ function DashboardContent() {
       html2canvas: { scale: 2, useCORS: true, backgroundColor: isDarkMode ? '#1e293b' : '#ffffff' },
       jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const }
     };
-
     html2pdf().set(opt).from(element).save();
   };
 
@@ -250,21 +247,57 @@ function DashboardContent() {
     if (files.length === 0) return alert('사진을 추가해주세요!');
     setAnalyzing(true); setReport(null); setIsEditing(false);
     try {
-      const firstFile = files[0]; const rawDate = new Date(firstFile.lastModified); const photoDateStr = `${rawDate.getFullYear()}년 ${rawDate.getMonth() + 1}월 ${rawDate.getDate()}일`;
-      const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${firstFile.name.split('.').pop()}`;
-      const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, firstFile);
-      const { data: publicUrlData } = supabase.storage.from('inspections').getPublicUrl(fileName); const imageUrl = publicUrlData?.publicUrl || '';
-      const formData = new FormData(); files.forEach(f => formData.append('images', f)); formData.append('photoDate', photoDateStr); formData.append('projectNumber', projectNumberInput); formData.append('workType', workTypeInput); formData.append('workDesc', workDescInput); formData.append('inspector', workerName); 
-      const res = await fetch('/api/analyze', { method: 'POST', body: formData }); const resData = await res.json();
+      // ★ 해결 1: 업로드한 모든 사진을 스토리지에 병렬로 업로드하고, URL들을 쉼표로 묶습니다.
+      const uploadedUrls: string[] = [];
+      for (const f of files) {
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${f.name.split('.').pop()}`;
+        const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, f);
+        if (!uploadError) {
+          const { data } = supabase.storage.from('inspections').getPublicUrl(fileName);
+          if (data?.publicUrl) uploadedUrls.push(data.publicUrl);
+        }
+      }
+      const imageUrlsString = uploadedUrls.join(','); // 예: "url1,url2,url3"
+
+      const rawDate = new Date(files[0].lastModified); 
+      const photoDateStr = `${rawDate.getFullYear()}년 ${rawDate.getMonth() + 1}월 ${rawDate.getDate()}일`;
+      
+      const formData = new FormData(); 
+      files.forEach(f => formData.append('images', f)); 
+      formData.append('photoDate', photoDateStr); 
+      formData.append('projectNumber', projectNumberInput); 
+      formData.append('workType', workTypeInput); 
+      formData.append('workDesc', workDescInput); 
+      formData.append('inspector', workerName); 
+      
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData }); 
+      const resData = await res.json();
       if (!res.ok) throw new Error(resData.error || '분석 실패');
+      
       await localforage.removeItem('pending_photos'); setFiles([]); setReport(resData.report);
+      
       if (workerId) {
-        const { data: insertedData } = await supabase.from('inspections').insert([{ worker_id: workerId, image_url: imageUrl, ai_report_text: resData.report, status: '완료' }]).select().single();
-        if (insertedData) { setCurrentReportId(insertedData.id); setPastReports(prev => [insertedData, ...prev]); }
-        const hasDanger = resData.report.includes('불량'); if (hasDanger) alert('⚠️ 위험 요소 발견! 보너스 10 EXP 추가 지급');
-        const gainedExp = (files.length * 5) + (hasDanger ? 10 : 0); let tempExp = exp + gainedExp; let calcLevel = 1; let reqExp = 100;
+        // ★ 해결 2: DB 인서트 시 에러(RLS 블락 등)가 발생하면 강제로 캐치해서 alert 창을 띄우도록 수정
+        const { data: insertedData, error: dbError } = await supabase.from('inspections').insert([
+          { worker_id: workerId, image_url: imageUrlsString, ai_report_text: resData.report, status: '완료' }
+        ]).select().single();
+        
+        if (dbError) throw new Error(`DB 저장 실패(RLS 오류 가능성): ${dbError.message}`);
+
+        if (insertedData) { 
+          setCurrentReportId(insertedData.id); 
+          setPastReports(prev => [insertedData, ...prev]); 
+        }
+        
+        const hasDanger = resData.report.includes('불량'); 
+        if (hasDanger) alert('⚠️ 위험 요소 발견! 보너스 10 EXP 추가 지급');
+        
+        const gainedExp = (files.length * 5) + (hasDanger ? 10 : 0); 
+        let tempExp = exp + gainedExp; let calcLevel = 1; let reqExp = 100;
         while (tempExp >= reqExp) { tempExp -= reqExp; calcLevel++; reqExp *= 2; }
+        
         if (calcLevel > level) { setShowLevelUpModal(true); confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } }); setTimeout(() => setShowLevelUpModal(false), 5000); }
+        
         setExp(exp + gainedExp); setLevel(calcLevel);
         await supabase.from('workers').update({ exp: exp + gainedExp, level: calcLevel }).eq('id', workerId);
       }
@@ -416,14 +449,26 @@ function DashboardContent() {
         <button onClick={() => setShowPast(!showPast)} style={{ width: '100%', padding: '16px', background: theme.cardBg, border: `1px solid ${theme.border}`, color: theme.textMain, borderRadius: '12px', cursor: 'pointer' }}>과거 기록 보기 ({pastReports.length}건)</button>
         {showPast && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
-            {pastReports.map((item, i) => (
-              <div key={i} style={{ padding: '16px', background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '12px' }}>
-                <div style={{ color: '#2563eb', fontWeight: 'bold', marginBottom: '10px' }}>{new Date(item.created_at).toLocaleString()}</div>
-                {item.image_url && <img src={item.image_url} alt="사진" style={{ width: '100%', height: '150px', objectFit: 'cover', borderRadius: '8px', marginBottom: '10px' }} />}
-                <div style={{ maxHeight: '150px', overflowY: 'auto', background: theme.bg, padding: '10px', borderRadius: '8px' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown></div>
-                <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 600); }} style={{ width: '100%', marginTop: '10px', padding: '10px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '8px', cursor: 'pointer' }}>인쇄</button>
-              </div>
-            ))}
+            {pastReports.map((item, i) => {
+              // ★ 해결 3: 과거 기록 렌더링 시 쉼표로 묶여 저장된 이미지 URL들을 모두 분리하여 화면에 뿌려줍니다.
+              const savedUrls = item.image_url ? item.image_url.split(',') : [];
+              return (
+                <div key={i} style={{ padding: '16px', background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '12px' }}>
+                  <div style={{ color: '#2563eb', fontWeight: 'bold', marginBottom: '10px' }}>{new Date(item.created_at).toLocaleString()}</div>
+                  
+                  {savedUrls.length > 0 && (
+                    <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', marginBottom: '10px', paddingBottom: '8px' }}>
+                      {savedUrls.map((u: string, idx: number) => (
+                        <img key={idx} src={u} alt="사진" style={{ width: '120px', height: '120px', objectFit: 'cover', borderRadius: '8px', flexShrink: 0 }} />
+                      ))}
+                    </div>
+                  )}
+                  
+                  <div style={{ maxHeight: '150px', overflowY: 'auto', background: theme.bg, padding: '10px', borderRadius: '8px' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown></div>
+                  <button onClick={() => { setPrintItem(item); setTimeout(() => { window.print(); setPrintItem(null); }, 600); }} style={{ width: '100%', marginTop: '10px', padding: '10px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '8px', cursor: 'pointer' }}>인쇄</button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -431,7 +476,15 @@ function DashboardContent() {
       {printItem && (
         <div className="print-target" style={{ padding: '20px', background: 'white', color: 'black' }}>
           <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown>
-          {printItem.image_url && <img src={printItem.image_url} alt="사진" style={{ width: '100%', maxHeight: '400px', objectFit: 'contain', marginTop: '20px' }} />}
+          {/* ★ 해결 4: 과거 기록 PDF 인쇄 모드에서도 저장된 모든 사진을 보여줍니다. */}
+          {printItem.image_url && (
+            <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '20px 0 10px 0', color: theme.textMain }}>📸 현장 사진 (첨부)</h4>
+              {printItem.image_url.split(',').map((u: string, i: number) => (
+                <img key={i} src={u} alt="첨부사진" style={{ width: '48%', maxHeight: '400px', objectFit: 'contain', borderRadius: '8px', border: `1px solid ${theme.border}` }} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
