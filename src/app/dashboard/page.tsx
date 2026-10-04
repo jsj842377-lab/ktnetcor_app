@@ -29,16 +29,16 @@ function DashboardContent() {
   const [dbTips, setDbTips] = useState<string[]>(['안전이 최우선입니다.']);
   const [loadingTip, setLoadingTip] = useState<string>('');
   
-  const [projectNumberInput, setProjectNumberInput] = useState<string>('안산-설비-2026-0096');
-  const [workTypeInput, setWorkTypeInput] = useState<string>('초고속 통신망 설비 점검');
-  const [workDescInput, setWorkDescInput] = useState<string>('현장 안전 수칙 준수 및 자재 적재 상태 확인');
+  // ★ 기존 하드코딩된 입력값을 비우고 초기 상태를 빈 문자열로 변경
+  const [projectNumberInput, setProjectNumberInput] = useState<string>('');
+  const [workTypeInput, setWorkTypeInput] = useState<string>('');
+  const [workDescInput, setWorkDescInput] = useState<string>('');
 
   const [report, setReport] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [currentReportId, setCurrentReportId] = useState<string | null>(null);
   const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
   
-  // ★ 아코디언 UI 관리를 위한 상태 (열려있는 보고서 ID)
   const [expandedReportId, setExpandedReportId] = useState<string | null>(null);
 
   const [editForm, setEditForm] = useState([
@@ -330,9 +330,11 @@ function DashboardContent() {
       const formData = new FormData(); 
       files.forEach(f => formData.append('images', f)); 
       formData.append('photoDate', photoDateStr); 
-      formData.append('projectNumber', projectNumberInput); 
-      formData.append('workType', workTypeInput); 
-      formData.append('workDesc', workDescInput); 
+      
+      // ★ 빈 값이면 AI가 당황하지 않게 '미입력'으로 처리
+      formData.append('projectNumber', projectNumberInput || '미입력'); 
+      formData.append('workType', workTypeInput || '미입력'); 
+      formData.append('workDesc', workDescInput || '미입력'); 
       formData.append('inspector', workerName); 
       
       const res = await fetch('/api/analyze', { method: 'POST', body: formData }); 
@@ -456,11 +458,24 @@ function DashboardContent() {
         </div>
       </div>
 
+      {/* ★ 사전 정보 입력란 명확한 라벨링 및 예시 플레이스홀더 적용 */}
       <div className="no-print" style={{ background: theme.cardBg, padding: '20px', borderRadius: '0', border: `1px solid ${theme.border}`, marginBottom: '16px' }}>
-        <h3 style={{ margin: '0 0 12px 0', fontSize: '15px', color: theme.textMain }}>📝 사전 정보 입력</h3>
-        <input type="text" value={projectNumberInput} onChange={e => setProjectNumberInput(e.target.value)} placeholder="공사번호" style={{ width: '100%', padding: '10px', marginBottom: '8px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
-        <input type="text" value={workTypeInput} onChange={e => setWorkTypeInput(e.target.value)} placeholder="작업공정" style={{ width: '100%', padding: '10px', marginBottom: '8px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
-        <input type="text" value={workDescInput} onChange={e => setWorkDescInput(e.target.value)} placeholder="작업내용" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
+        <h3 style={{ margin: '0 0 16px 0', fontSize: '15px', color: theme.textMain }}>📝 사전 정보 입력</h3>
+        
+        <div style={{ marginBottom: '12px' }}>
+          <label style={{ display: 'block', fontSize: '13px', color: theme.textSub, marginBottom: '6px', fontWeight: 'bold' }}>공사번호</label>
+          <input type="text" value={projectNumberInput} onChange={e => setProjectNumberInput(e.target.value)} placeholder="예: 안산-설비-2026-0096" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
+        </div>
+
+        <div style={{ marginBottom: '12px' }}>
+          <label style={{ display: 'block', fontSize: '13px', color: theme.textSub, marginBottom: '6px', fontWeight: 'bold' }}>작업공정</label>
+          <input type="text" value={workTypeInput} onChange={e => setWorkTypeInput(e.target.value)} placeholder="예: 초고속 통신망 설비 점검" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
+        </div>
+
+        <div style={{ marginBottom: '4px' }}>
+          <label style={{ display: 'block', fontSize: '13px', color: theme.textSub, marginBottom: '6px', fontWeight: 'bold' }}>작업내용</label>
+          <input type="text" value={workDescInput} onChange={e => setWorkDescInput(e.target.value)} placeholder="예: 현장 안전 수칙 준수 및 자재 적재 상태 확인" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
+        </div>
       </div>
 
       <div className="no-print" style={{ marginBottom: '16px' }}>
@@ -531,7 +546,6 @@ function DashboardContent() {
         <button onClick={() => setShowPast(!showPast)} style={{ width: '100%', padding: '16px', background: theme.cardBg, border: `1px solid ${theme.border}`, color: theme.textMain, borderRadius: '0', cursor: 'pointer' }}>과거 기록 보기 ({pastReports.length}건)</button>
         {showPast && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
-            {/* ★ 한눈에 보기(아코디언) UI 적용 파트 */}
             {pastReports.map((item, i) => {
               const isExpanded = expandedReportId === item.id;
               const hasDanger = item.ai_report_text?.includes('불량');
@@ -540,7 +554,6 @@ function DashboardContent() {
 
               return (
                 <div key={item.id} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '0', overflow: 'hidden' }}>
-                  {/* 요약 헤더 (클릭 시 토글) */}
                   <div 
                     onClick={() => setExpandedReportId(isExpanded ? null : item.id)}
                     style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', background: isExpanded ? theme.mdTableHead : 'transparent' }}
@@ -556,7 +569,6 @@ function DashboardContent() {
                     </span>
                   </div>
 
-                  {/* 펼쳐지는 상세 내용 영역 */}
                   {isExpanded && (
                     <div style={{ padding: '24px', borderTop: `1px solid ${theme.border}` }}>
                       <div style={{ background: theme.bg, padding: '16px', borderRadius: '0' }}>
