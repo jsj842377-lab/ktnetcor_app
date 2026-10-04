@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-// ★ 대시보드에 설정했던 경기설계팀 10명 명단과 동일하게 맞춤
+// ★ 대시보드와 동일한 경기설계팀 10명 명단
 const ALLOWED_WORKERS = ['전소정', '김철수', '이영희', '박지민', '최동훈', '정유진', '강민재', '조수빈', '윤건우', '홍길동'];
 
 export default function HomePage() {
@@ -12,6 +12,8 @@ export default function HomePage() {
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // 입력값의 앞뒤 공백 제거
     const trimmedName = name.trim();
 
     if (!trimmedName) {
@@ -19,17 +21,20 @@ export default function HomePage() {
       return;
     }
 
-    // ★ 1. '관리자' 또는 'admin' 입력 시 관리자 페이지로 자동 라우팅
-    if (trimmedName === '관리자' || trimmedName === 'admin') {
+    // ★ 버그 해결: 명확하고 엄격한 if ~ else if 분기 처리
+    
+    // 1. 관리자 접속 감지 (대소문자 구별 없이 admin 허용)
+    if (trimmedName === '관리자' || trimmedName.toLowerCase() === 'admin') {
       router.push('/admin');
-      return;
-    }
-
-    // ★ 2. 화이트리스트에 있는 팀원 이름일 경우 대시보드로 이동
-    if (ALLOWED_WORKERS.includes(trimmedName)) {
-      router.push(`/dashboard?worker=${trimmedName}`);
     } 
-    // ★ 3. 그 외의 모든 이름은 접근 차단
+    
+    // 2. 화이트리스트에 있는 작업자 감지
+    else if (ALLOWED_WORKERS.includes(trimmedName)) {
+      // 한글 이름이 URL에서 깨져서 인식 불가 상태가 되는 것을 방지 (인코딩 처리)
+      router.push(`/dashboard?worker=${encodeURIComponent(trimmedName)}`);
+    } 
+    
+    // 3. 그 외의 모든 미등록 사용자 접근 차단
     else {
       alert('경기설계팀 소속 팀원만 접근할 수 있습니다. 등록된 이름을 확인해주세요.');
       setName('');
@@ -38,7 +43,6 @@ export default function HomePage() {
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f8fafc', fontFamily: "'Pretendard', sans-serif" }}>
-      {/* 폰트 적용 및 기본 여백 제거 */}
       <style dangerouslySetInnerHTML={{ __html: `
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
         body { margin: 0; }
@@ -51,7 +55,7 @@ export default function HomePage() {
         
         <input 
           type="text" 
-          placeholder="이름을 입력하세요 (예: 홍길동)"
+          placeholder="이름을 입력하세요 (예: 전소정)"
           value={name} 
           onChange={e => setName(e.target.value)} 
           style={{ width: '100%', padding: '14px', marginBottom: '20px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '16px', boxSizing: 'border-box', outline: 'none' }} 
