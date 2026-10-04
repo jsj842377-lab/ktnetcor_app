@@ -30,17 +30,35 @@ export async function POST(req: NextRequest) {
       })
     );
 
-    const genAI = new GoogleGenerativeAI(apiKey);
+    // ★ 1. 구글 서버에 현재 API 키로 사용 가능한 전체 모델 목록을 실시간으로 요청합니다.
+    const modelListRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    const modelListData = await modelListRes.json();
     
-    // ★ 문법 오류(스마트 따옴표 및 쉼표 누락) 해결
-    const fallbackModels = [
-      'gemini-3-flash',
-      'gemini-3-flash-preview',
-      'gemini-3.0-flash',
-      'gemini-1.5-flash',
-      process.env.GEMINI_MODEL?.trim()
-    ].filter(Boolean) as string[];
+    let targetModelName = '';
 
+    if (modelListData.models) {
+      const availableModels = modelListData.models
+        .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+        .map((m: any) => m.name.replace('models/', ''));
+        
+      // ★ 2. 사용 가능한 모델 중 사진 분석에 최적화된 모델을 우선순위대로 자동 탐지하여 할당합니다.
+      targetModelName = 
+        availableModels.find((m: string) => m.includes('1.5-flash')) ||
+        availableModels.find((m: string) => m.includes('flash')) || 
+        availableModels.find((m: string) => m.includes('vision')) || 
+        availableModels.find((m: string) => m.includes('pro')) || 
+        availableModels[0];
+    }
+
+    if (!targetModelName) {
+      throw new Error('이 API 키로는 사용할 수 있는 AI 모델이 아예 없습니다. 구글 AI 스튜디오에서 키를 새로 발급받아주세요.');
+    }
+
+    console.log('✅ [디버깅] 자동 선택되어 실행된 AI 모델:', targetModelName);
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: targetModelName });
+    
     const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진들을 꼼꼼히 분석하여, 반드시 아래의 [안전점검 결과보고서] 양식과 100% 동일한 마크다운(Markdown) 표 형태로 결과를 작성해주세요.
 
 [작성 지침]
@@ -75,52 +93,27 @@ export async function POST(req: NextRequest) {
 `;
 
     let result;
-    let finalError;
-
-    for (const modelName of fallbackModels) {
+    let retries = 0;
+    const maxRetries = 2;
+    
+    while (retries < maxRetries) {
       try {
-        const model = genAI.getGenerativeModel({ model: modelName });
-        let retries = 0;
-        const maxRetries = 2;
-        
-        while (retries < maxRetries) {
-          try {
-            result = await model.generateContent([prompt, ...imageParts]);
-            break; 
-          } catch (err: any) {
-            const status = err.status || err.response?.status;
-            if (status === 404) throw err; // 404면 즉시 배열의 다음 모델로 넘김
-            if (status === 429) throw new Error('일일 API 할당량이 소진되었습니다.');
-            if (status === 503 && retries < maxRetries - 1) {
-              retries++;
-              await delay(Math.pow(2, retries) * 1500);
-              continue;
-            }
-            throw err;
-          }
-        }
-        if (result) break; // 성공 시 즉시 루프 탈출
+        result = await model.generateContent([prompt, ...imageParts]);
+        break; 
       } catch (err: any) {
-        finalError = err;
-        continue; 
+        const status = err.status || err.response?.status;
+        if (status === 429) throw new Error('일일 API 할당량이 소진되었습니다.');
+        if (status === 503 && retries < maxRetries - 1) {
+          retries++;
+          await delay(Math.pow(2, retries) * 1500);
+          continue;
+        }
+        throw err; 
       }
     }
-
-    if (!result) {
-      try {
-        const modelListRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-        const modelListData = await modelListRes.json();
-        if (modelListData.models) {
-          const availableModels = modelListData.models
-            .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
-            .map((m: any) => m.name.replace('models/', ''))
-            .join(', ');
-          throw new Error(`🚨 API 키에 할당된 모델 이름을 찾지 못했습니다. [사용 가능 모델]: ${availableModels}`);
-        }
-      } catch (e) {}
-      throw new Error(finalError?.message || 'AI 모델 호출에 실패했습니다.');
-    }
     
+    if (!result) throw new Error('AI 분석 결과를 받아오지 못했습니다.');
+
     const response = await result.response;
     return NextResponse.json({ report: response.text() });
 
