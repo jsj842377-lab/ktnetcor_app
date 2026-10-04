@@ -26,30 +26,29 @@ export async function POST(req: NextRequest) {
       files.map(async (file) => {
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
-        return {
-          inlineData: {
-            data: buffer.toString('base64'),
-            mimeType: file.type,
-          },
-        };
+        return { inlineData: { data: buffer.toString('base64'), mimeType: file.type } };
       })
     );
 
     const genAI = new GoogleGenerativeAI(apiKey);
     
+    // ★ API 404 에러 원천 차단: 환경변수를 무시하고 가장 안정적인 1.5-flash 이름으로 강제 고정
+    const modelName = 'gemini-1.5-flash';
+    const model = genAI.getGenerativeModel({ model: modelName });
+
     const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진들을 꼼꼼히 분석하여, 반드시 아래의 [안전점검 결과보고서] 양식과 100% 동일한 마크다운(Markdown) 표 형태로 결과를 작성해주세요.
 
 [작성 지침]
-1. **공사번호**: 입력된 값("${projectNumber}")을 그대로 사용하세요.
-2. **점검일자**: 입력된 값("${photoDate}")을 그대로 사용하세요.
-3. **작업공정**: 입력된 값("${workType}")을 그대로 사용하세요.
-4. **작업내용**: 입력된 값("${workDesc}")을 그대로 사용하세요.
-5. **점검자**: 입력된 값("${inspector}")을 그대로 사용하세요.
+1. **공사번호**: "${projectNumber}"
+2. **점검일자**: "${photoDate}"
+3. **작업공정**: "${workType}"
+4. **작업내용**: "${workDesc}"
+5. **점검자**: "${inspector}"
 6. **조치사항 및 비고**: 사람이 직접 검토할 예정이므로 AI는 절대로 내용을 채우지 말고 빈칸( )으로 두세요.
 7. **결과(양호/불량)**: 지정된 점검항목에 대해 사진을 분석하여 단답으로 작성하세요.
-8. **시간적 순서 파악**: 제공된 여러 장의 사진은 왼쪽(첫 번째)부터 오른쪽(마지막)으로 갈수록 시간 순서입니다.
+8. **시간적 순서 파악**: 제공된 여러 장의 사진은 왼쪽부터 오른쪽으로 갈수록 '작업 전 ➔ 작업 중 ➔ 작업 후'의 시간 순서입니다.
 9. **전후 비교 분석**: 첫 번째 사진에 위험 요소가 있었더라도 마지막 사진에서 개선되었다면 조치 완료로 인지하세요.
-10. **최종 결과 기준**: 결과 항목은 중간 과정이 아닌 **마지막 사진(최종 상태)을 최우선 기준**으로 최종 판정하세요.
+10. **최종 결과 기준**: 결과 항목은 중간 과정이 아닌 마지막 사진(최종 상태)을 최우선 기준으로 판정하세요.
 
 ### 안전점검 결과보고서
 
@@ -68,71 +67,29 @@ export async function POST(req: NextRequest) {
 | 사다리 및 장비 상태 | (AI 판정) | | |
 | 적정 공법 적용 상태 | (AI 판정) | | |
 | 정리정돈 상태 | (AI 판정) | | |
-
-실제 첨부된 사진 상황에 맞추어 생성하세요.`;
-
-    const envModel = process.env.GEMINI_MODEL?.trim();
-    
-    // ★ 1.5 버전이 닫혔을 경우를 대비해 2.0/2.5 최신 라인업 추가
-    const fallbackModels = [
-      envModel,
-      'gemini-2.5-flash',
-      'gemini-2.0-flash',
-      'gemini-1.5-flash',
-      'gemini-1.5-pro'
-    ].filter(Boolean) as string[];
+`;
 
     let result;
-    let finalError;
-
-    for (const modelName of fallbackModels) {
+    let retries = 0;
+    const maxRetries = 2;
+    
+    while (retries < maxRetries) {
       try {
-        const model = genAI.getGenerativeModel({ model: modelName });
-        let retries = 0;
-        const maxRetries = 2;
-        
-        while (retries < maxRetries) {
-          try {
-            result = await model.generateContent([prompt, ...imageParts]);
-            break; 
-          } catch (err: any) {
-            const status = err.status || err.response?.status;
-            if (status === 404) throw err; // 404면 지연 없이 즉각 다음 모델로
-            if (status === 429) throw new Error('일일 API 할당량이 소진되었습니다.');
-            if (status === 503 && retries < maxRetries - 1) {
-              retries++;
-              await delay(Math.pow(2, retries) * 1500);
-              continue;
-            }
-            throw err;
-          }
-        }
-        if (result) break;
+        result = await model.generateContent([prompt, ...imageParts]);
+        break; 
       } catch (err: any) {
-        finalError = err;
-        continue; 
+        const status = err.status || err.response?.status;
+        if (status === 429) throw new Error('일일 API 할당량이 소진되었습니다.');
+        if (status === 503 && retries < maxRetries - 1) {
+          retries++;
+          await delay(Math.pow(2, retries) * 1500);
+          continue;
+        }
+        throw err;
       }
     }
 
-    // ★ 핵심 디버깅 기능: 모든 모델 접속 실패 시, 구글 서버에 직접 허용된 모델 리스트를 물어봄
-    if (!result) {
-      try {
-        const modelListRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-        const modelListData = await modelListRes.json();
-        
-        if (modelListData.models) {
-          const availableModels = modelListData.models
-            .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
-            .map((m: any) => m.name.replace('models/', ''))
-            .join(', ');
-            
-          throw new Error(`🚨 현재 API 키에 허용된 비전 모델이 없습니다.\n[현재 사용 가능한 모델]: ${availableModels}\n\n👉 위 리스트 중 하나를 복사하여 Vercel 환경변수 'GEMINI_MODEL' 값으로 설정하세요.`);
-        }
-      } catch (fetchErr) {
-        // 리스트 가져오기조차 실패하면 원래 에러를 던짐
-      }
-      throw new Error(finalError?.message || '모든 AI 모델 호출에 실패했습니다. API 키 권한을 확인하세요.');
-    }
+    if (!result) throw new Error('AI 분석 실패. API 키의 할당량 및 권한을 확인하세요.');
     
     const response = await result.response;
     return NextResponse.json({ report: response.text() });

@@ -1,395 +1,266 @@
 'use client';
 
-import { useState, useEffect, Suspense, useRef } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/utils/supabase';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import confetti from 'canvas-confetti';
-import imageCompression from 'browser-image-compression';
-import localforage from 'localforage';
+import * as XLSX from 'xlsx-js-style';
 
-// ★ 1. 안전 명언 및 팁 배열 정의 (원하는 문구로 자유롭게 추가 가능)
-const SAFETY_TIPS = [
-  "안전은 타협의 대상이 아닙니다.",
-  "당신의 안전모가 당신의 생명을 지킵니다.",
-  "작업 전 5분 점검, 당신의 평생을 지킵니다.",
-  "아차 사고, 다음은 진짜 사고입니다.",
-  "정리정돈은 안전의 첫걸음입니다.",
-  "빨리빨리 보다는 안전하게!",
-  "안전수칙 준수는 가족에 대한 사랑입니다.",
-  "익숙함에 속아 안전을 잃지 마세요.",
-  "위험요소 발견 즉시 조치하세요.",
-  "우리의 목표는 무재해입니다!"
-];
-
-function DashboardContent() {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const workerName = searchParams.get('worker') || '작업자';
-
-  const currentYear = new Date().getFullYear();
-  const currentQuarter = Math.floor(new Date().getMonth() / 3) + 1;
-
-  const [workerId, setWorkerId] = useState<string | null>(null);
-  const [level, setLevel] = useState<number>(1);
-  const [exp, setExp] = useState<number>(0);
-  const [files, setFiles] = useState<File[]>([]);
-  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
-  const [analyzing, setAnalyzing] = useState<boolean>(false);
+export default function AdminPage() {
+  const [password, setPassword] = useState<string>('');
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [inspections, setInspections] = useState<any[]>([]);
   
-  // ★ 2. 로딩 중 표시할 팁을 관리하는 State 추가
-  const [loadingTip, setLoadingTip] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(false);
+  const [progress, setProgress] = useState<number>(0);
   
-  const [projectNumberInput, setProjectNumberInput] = useState<string>('안산-설비-2026-0096');
-  const [workTypeInput, setWorkTypeInput] = useState<string>('초고속 통신망 설비 점검');
-  const [workDescInput, setWorkDescInput] = useState<string>('현장 안전 수칙 준수 및 자재 적재 상태 확인');
+  // 탭 상태 (dashboard vs tips)
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tips'>('dashboard');
 
-  const [report, setReport] = useState<string | null>(null);
-  const [isEditing, setIsEditing] = useState<boolean>(false);
-  const [currentReportId, setCurrentReportId] = useState<string | null>(null);
-  
-  const [pastReports, setPastReports] = useState<any[]>([]);
-  const [showPast, setShowPast] = useState<boolean>(false);
-  const [showLevelUpModal, setShowLevelUpModal] = useState<boolean>(false);
-  const [printItem, setPrintItem] = useState<any>(null);
-  const reportRef = useRef<HTMLDivElement>(null);
+  const [viewMode, setViewMode] = useState<'month' | 'quarter'>('month');
+  const [selectedMonth, setSelectedMonth] = useState<string>('2026-10');
+  const [selectedYear, setSelectedYear] = useState<string>('2026');
+  const [selectedQuarter, setSelectedQuarter] = useState<number>(4);
 
-  // ★ 3. analyzing 상태가 켜질 때마다 1.5초 간격으로 명언을 무작위로 바꾸는 Effect
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (analyzing) {
-      setLoadingTip(SAFETY_TIPS[Math.floor(Math.random() * SAFETY_TIPS.length)]);
-      interval = setInterval(() => {
-        setLoadingTip(SAFETY_TIPS[Math.floor(Math.random() * SAFETY_TIPS.length)]);
-      }, 1500);
+  // 명언 관리 상태
+  const [tips, setTips] = useState<any[]>([]);
+  const [newTip, setNewTip] = useState<string>('');
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password === '1234') {
+      setIsAuthenticated(true);
+    } else {
+      alert('비밀번호가 일치하지 않습니다.');
+      setPassword('');
     }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [analyzing]);
+  };
+
+  const fetchTips = async () => {
+    const { data } = await supabase.from('safety_tips').select('*').order('created_at', { ascending: false });
+    if (data) setTips(data);
+  };
+
+  const handleAddTip = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTip.trim()) return;
+    const { error } = await supabase.from('safety_tips').insert([{ content: newTip, is_active: true }]);
+    if (error) alert('추가 실패: ' + error.message);
+    else { setNewTip(''); fetchTips(); }
+  };
+
+  const toggleTipActive = async (id: number, currentStatus: boolean) => {
+    await supabase.from('safety_tips').update({ is_active: !currentStatus }).eq('id', id);
+    fetchTips();
+  };
+
+  const deleteTip = async (id: number) => {
+    if(window.confirm('완전히 삭제하시겠습니까?')) {
+      await supabase.from('safety_tips').delete().eq('id', id);
+      fetchTips();
+    }
+  };
 
   useEffect(() => {
-    const loadPendingPhotos = async () => {
-      try {
-        const savedFiles = await localforage.getItem<File[]>('pending_photos');
-        if (savedFiles && savedFiles.length > 0) {
-          setFiles(savedFiles);
-          setPreviewUrls(savedFiles.map(file => URL.createObjectURL(file)));
-        }
-      } catch (err) {
-        console.error('임시 저장 호출 에러:', err);
-      }
-    };
-
-    const fetchWorkerData = async () => {
-      let { data: workerData } = await supabase
-        .from('workers')
-        .select('*')
-        .eq('worker_name', workerName)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-
-      if (!workerData) {
-        const { data: newWorker, error } = await supabase
-          .from('workers')
-          .insert([{ worker_name: workerName, level: 1, exp: 0 }])
-          .select()
-          .single();
-        if (error) return console.error(error);
-        workerData = newWorker;
-      }
-
-      if (workerData) {
-        const { data: reportsData } = await supabase
-          .from('inspections')
-          .select('*')
-          .eq('worker_id', workerData.id)
-          .order('created_at', { ascending: false });
-
-        let lastActiveDate = new Date(workerData.created_at);
-        if (reportsData && reportsData.length > 0) {
-          const lastReportDate = new Date(reportsData[0].created_at);
-          if (lastReportDate > lastActiveDate) lastActiveDate = lastReportDate;
-        }
-
-        const lastActiveYear = lastActiveDate.getFullYear();
-        const lastActiveQuarter = Math.floor(lastActiveDate.getMonth() / 3) + 1;
-
-        if (currentYear > lastActiveYear || (currentYear === lastActiveYear && currentQuarter > lastActiveQuarter)) {
-          if (workerData.exp > 0 || workerData.level > 1) {
-            workerData.exp = 0;
-            workerData.level = 1;
-            await supabase.from('workers').update({ exp: 0, level: 1 }).eq('id', workerData.id);
-            alert(`🎉 새로운 시즌(${currentYear}년 ${currentQuarter}분기) 시작! 레벨이 1로 초기화되었습니다.`);
-          }
-        }
-
-        setWorkerId(workerData.id);
-        setLevel(workerData.level);
-        setExp(workerData.exp);
-        if (reportsData) setPastReports(reportsData);
-      }
-    };
+    if (!isAuthenticated) return;
     
-    loadPendingPhotos();
-    if (workerName) fetchWorkerData();
-  }, [workerName, currentYear, currentQuarter]);
-
-  const handleLogout = () => {
-    if(window.confirm('정말 로그아웃 하시겠습니까?')) {
-      localStorage.removeItem('ktnetcore_worker');
-      router.push('/');
+    if (activeTab === 'tips') {
+      fetchTips();
+      return;
     }
-  };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const newFiles = Array.from(e.target.files);
-      const compressedFiles = await Promise.all(
-        newFiles.map(async (file) => {
-          const options = { maxSizeMB: 0.3, maxWidthOrHeight: 1024, initialQuality: 0.7, useWebWorker: true };
-          try { return await imageCompression(file, options); } 
-          catch (error) { return file; }
-        })
-      );
-      const currentSaved = await localforage.getItem<File[]>('pending_photos') || [];
-      const newTotalFiles = [...currentSaved, ...compressedFiles];
+    const fetchData = async () => {
+      setLoading(true);
+      setProgress(10);
       
-      await localforage.setItem('pending_photos', newTotalFiles);
-      setFiles(newTotalFiles);
-      setPreviewUrls(newTotalFiles.map(file => URL.createObjectURL(file)));
-      setReport(null);
-      setIsEditing(false);
-    }
-  };
-
-  const removeFile = async (idxToRemove: number) => {
-    const newFiles = files.filter((_, idx) => idx !== idxToRemove);
-    await localforage.setItem('pending_photos', newFiles);
-    setFiles(newFiles);
-    setPreviewUrls(newFiles.map(file => URL.createObjectURL(file)));
-  };
-
-  const handleUploadAndAnalyze = async () => {
-    if (files.length === 0) return alert('사진을 추가해주세요!');
-    setAnalyzing(true);
-    setReport(null);
-    setIsEditing(false);
-
-    try {
-      const firstFile = files[0];
-      const rawDate = new Date(firstFile.lastModified);
-      const photoDateStr = `${rawDate.getFullYear()}년 ${rawDate.getMonth() + 1}월 ${rawDate.getDate()}일`;
-      const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${firstFile.name.split('.').pop()}`;
-      
-      const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, firstFile);
-      if (uploadError) console.warn('업로드 실패(계속 진행):', uploadError.message);
-      
-      const { data: publicUrlData } = supabase.storage.from('inspections').getPublicUrl(fileName);
-      const imageUrl = publicUrlData?.publicUrl || '';
-
-      const formData = new FormData();
-      files.forEach(f => formData.append('images', f));
-      formData.append('photoDate', photoDateStr);
-      formData.append('projectNumber', projectNumberInput);
-      formData.append('workType', workTypeInput);
-      formData.append('workDesc', workDescInput);
-      formData.append('inspector', '경기 서부설계팀');
-
-      const res = await fetch('/api/analyze', { method: 'POST', body: formData });
-      const resData = await res.json();
-      if (!res.ok) throw new Error(resData.error || '분석 실패');
-
-      await localforage.removeItem('pending_photos');
-      setFiles([]);
-      setReport(resData.report);
-
-      if (workerId) {
-        const { data: insertedData } = await supabase.from('inspections').insert([
-          { worker_id: workerId, image_url: imageUrl, ai_report_text: resData.report, status: '완료' }
-        ]).select().single();
-
-        if (insertedData) {
-          setCurrentReportId(insertedData.id);
-          setPastReports(prev => [insertedData, ...prev]);
-        }
-        
-        const hasDanger = resData.report.includes('불량');
-        if (hasDanger) alert('⚠️ 위험 요소 발견! 보너스 10 EXP 추가 지급');
-        
-        const gainedExp = (files.length * 5) + (hasDanger ? 10 : 0); 
-        let tempExp = exp + gainedExp;
-        let calcLevel = 1;
-        let reqExp = 100;
-        
-        while (tempExp >= reqExp) {
-          tempExp -= reqExp;
-          calcLevel++;
-          reqExp *= 2; 
-        }
-
-        if (calcLevel > level) {
-          setShowLevelUpModal(true);
-          confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
-          setTimeout(() => setShowLevelUpModal(false), 5000);
-        }
-
-        setExp(exp + gainedExp);
-        setLevel(calcLevel);
-        await supabase.from('workers').update({ exp: exp + gainedExp, level: calcLevel }).eq('id', workerId);
+      let startDate: Date, endDate: Date;
+      if (viewMode === 'month') {
+        startDate = new Date(`${selectedMonth}-01T00:00:00.000Z`);
+        endDate = new Date(startDate);
+        endDate.setMonth(endDate.getMonth() + 1);
+      } else {
+        const startMonth = String((selectedQuarter - 1) * 3 + 1).padStart(2, '0');
+        startDate = new Date(`${selectedYear}-${startMonth}-01T00:00:00.000Z`);
+        endDate = new Date(startDate);
+        endDate.setMonth(endDate.getMonth() + 3);
       }
-    } catch (err: any) {
-      alert(`오류: ${err.message}`);
-    } finally {
-      setAnalyzing(false);
-    }
+      setProgress(40);
+
+      const { data, error } = await supabase
+        .from('inspections')
+        .select(`*, workers ( worker_name )`)
+        .gte('created_at', startDate.toISOString())
+        .lt('created_at', endDate.toISOString())
+        .order('created_at', { ascending: true });
+        
+      setProgress(80);
+      if (error) console.error(error);
+      if (data) setInspections(data);
+      
+      setProgress(100);
+      setTimeout(() => setLoading(false), 500);
+    };
+
+    fetchData();
+  }, [viewMode, selectedMonth, selectedYear, selectedQuarter, isAuthenticated, activeTab]);
+
+  const exportToExcel = async () => {
+    if (inspections.length === 0) return alert('기록이 없습니다.');
+    setLoading(true);
+    setProgress(20);
+    await new Promise(r => setTimeout(r, 100)); 
+    setProgress(50);
+
+    // ★ 엑셀 폰트를 Pretendard로 강제 고정
+    const headerStyle = { 
+      fill: { fgColor: { rgb: "E2E8F0" } }, 
+      font: { name: 'Pretendard', bold: true }, 
+      alignment: { horizontal: "center", vertical: "center" }, 
+      border: { top: { style: "thin" }, bottom: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" } } 
+    };
+    const centerStyle = { 
+      font: { name: 'Pretendard' },
+      alignment: { horizontal: "center", vertical: "center" } 
+    };
+
+    const companySet = new Set<string>();
+    const dateMap = new Map();
+    const monthMap = new Map();
+    const detailRows: any[] = [];
+
+    const extractMatch = (text: string, key: string) => (text.match(new RegExp(`\\|\\s*\\*\\*${key}\\*\\*\\s*\\|\\s*([^\\|]+)\\s*\\|`)) || [])[1]?.trim() || '';
+
+    inspections.forEach((item) => {
+      const d = new Date(item.created_at);
+      const yyyyMmDd = d.toISOString().slice(0, 10);
+      const yyyyMm = `${d.getFullYear()}년 ${d.getMonth() + 1}월`;
+      const txt = item.ai_report_text || '';
+      const pNum = extractMatch(txt, '공사번호') || '미분류';
+      const cName = pNum.split('-')[0] || '미상'; 
+      const isDgr = txt.includes('불량') ? 'X' : 'O';
+
+      companySet.add(cName);
+      if (!dateMap.has(yyyyMmDd)) dateMap.set(yyyyMmDd, {});
+      dateMap.get(yyyyMmDd)[cName] = isDgr === 'X' ? '△' : 'O';
+      if (!monthMap.has(yyyyMm)) monthMap.set(yyyyMm, {});
+      monthMap.get(yyyyMm)[cName] = 'O';
+
+      detailRows.push([
+        { v: yyyyMmDd, s: centerStyle }, { v: d.getHours() < 12 ? '오전' : '오후', s: centerStyle }, 
+        { v: item.workers?.worker_name || '알수없음', s: centerStyle }, { v: cName, s: centerStyle }, 
+        { v: pNum, s: centerStyle }, { v: extractMatch(txt, '작업공정'), s: centerStyle }, { v: isDgr, s: centerStyle }
+      ]);
+    });
+
+    setProgress(80);
+    await new Promise(r => setTimeout(r, 100)); 
+
+    const comps = Array.from(companySet);
+    const hds = ['', ...comps].map(t => ({ v: t, s: headerStyle }));
+    
+    const s1Data: any[][] = [[{ v: '자재 실사', s: { font: { name: 'Pretendard', bold: true } } }], hds];
+    Array.from(monthMap.keys()).forEach(m => s1Data.push([{ v: m, s: centerStyle }, ...comps.map(c => ({ v: monthMap.get(m)[c] || '-', s: centerStyle }))]));
+    s1Data.push([], [{ v: '안전점검', s: { font: { name: 'Pretendard', bold: true } } }], hds);
+    Array.from(dateMap.keys()).forEach(d => s1Data.push([{ v: d, s: centerStyle }, ...comps.map(c => ({ v: dateMap.get(d)[c] || '-', s: centerStyle }))]));
+
+    const s2Data = [['점검일자', '시간', '인원', '협력사', '공사번호', '공사유형', '안전작업 이행 여부'].map(t => ({ v: t, s: headerStyle })), ...detailRows];
+
+    const wb = XLSX.utils.book_new();
+    const ws1 = XLSX.utils.aoa_to_sheet(s1Data);
+    const ws2 = XLSX.utils.aoa_to_sheet(s2Data);
+    ws1['!cols'] = [{ wch: 15 }, ...comps.map(() => ({ wch: 15 }))];
+    ws2['!cols'] = [{ wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 25 }, { wch: 20 }, { wch: 20 }];
+
+    const prefix = viewMode === 'month' ? selectedMonth : `${selectedYear}년_${selectedQuarter}분기`;
+    XLSX.utils.book_append_sheet(wb, ws1, `${prefix}_협력사관리`.substring(0, 31));
+    XLSX.utils.book_append_sheet(wb, ws2, `${prefix}_세부이력`.substring(0, 31));
+
+    XLSX.writeFile(wb, `안전점검_${prefix}.xlsx`);
+    setProgress(100);
+    setTimeout(() => setLoading(false), 500);
   };
 
-  const handleUpdateReport = async () => {
-    setIsEditing(false); 
-    if (currentReportId && report) {
-      await supabase.from('inspections').update({ ai_report_text: report }).eq('id', currentReportId);
-      setPastReports(prev => prev.map(item => item.id === currentReportId ? { ...item, ai_report_text: report } : item));
-    }
-  };
-
-  const handlePrintPast = (item: any) => {
-    setPrintItem(item);
-    setTimeout(() => { window.print(); setPrintItem(null); }, 100);
-  };
-
-  const mdComps = {
-    table: (props: any) => <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px', border: '1.5px solid #000' }} {...props} /></div>,
-    th: (props: any) => <th style={{ border: '1px solid #000', background: '#f8fafc', padding: '10px', textAlign: 'center', fontSize: '13px', color: '#000' }} {...props} />,
-    td: (props: any) => <td style={{ border: '1px solid #000', padding: '10px', fontSize: '13px', textAlign: 'center', color: '#000' }} {...props} />,
-    h3: (props: any) => <h3 style={{ fontSize: '18px', color: '#000', marginTop: '20px', textAlign: 'center' }} {...props} />,
-    h4: (props: any) => <div style={{ textAlign: 'center', fontSize: '16px', fontWeight: 'bold', margin: '20px 0 10px 0', color: '#000' }} {...props} />,
-    ul: (props: any) => <ul style={{ paddingLeft: '20px', margin: '8px 0', color: '#000' }} {...props} />,
-  };
-
-  return (
-    <div style={{ maxWidth: '640px', margin: '0 auto', padding: '16px', fontFamily: 'sans-serif' }}>
-      <style dangerouslySetInnerHTML={{ __html: `
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        @keyframes fadeInOut { 0% { opacity: 0; transform: translateY(10px); } 20% { opacity: 1; transform: translateY(0); } 80% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-10px); } }
-        @media print { body * { visibility: hidden; } .print-target, .print-target * { visibility: visible; } .print-target { position: absolute; left: 0; top: 0; width: 100%; } .no-print { display: none !important; } }
-      `}} />
-
-      {showLevelUpModal && (
-        <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.8)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'white', padding: '40px', borderRadius: '20px', textAlign: 'center' }}>
-            <div style={{ fontSize: '60px' }}>🎉</div>
-            <h2 style={{ color: '#2563eb' }}>레벨 업! Lv.{level}</h2>
-            <button onClick={() => setShowLevelUpModal(false)} style={{ padding: '14px', background: '#2563eb', color: 'white', borderRadius: '12px', border: 'none', width: '100%', cursor: 'pointer' }}>확인</button>
-          </div>
-        </div>
-      )}
-
-      {/* ★ 4. 로딩 UI 애니메이션 및 랜덤 명언 출력 적용 */}
-      {analyzing && (
-        <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
-          <div style={{ width: '60px', height: '60px', border: '5px solid rgba(255,255,255,0.2)', borderTop: '5px solid #3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '24px' }} />
-          <h3 style={{ color: '#60a5fa', fontSize: '15px', marginBottom: '16px', fontWeight: 'bold' }}>Vision AI 분석 중...</h3>
-          <div style={{ height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <p key={loadingTip} style={{ color: 'white', fontSize: '20px', fontWeight: 'bold', textAlign: 'center', lineHeight: '1.4', animation: 'fadeInOut 1.5s ease-in-out forwards', margin: 0 }}>
-              "{loadingTip}"
-            </p>
-          </div>
-        </div>
-      )}
-
-      <div className="no-print" style={{ padding: '16px', borderRadius: '12px', background: '#f1f5f9', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <div style={{ fontSize: '36px', padding: '8px', background: 'white', borderRadius: '50%' }}>{level === 1 ? '🐣' : level < 3 ? '👷' : '🦸‍♂️'}</div>
-        <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '4px' }}>
-            <h2 style={{ margin: 0, fontSize: '16px' }}>{workerName}</h2>
-            <span style={{ fontSize: '11px', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '8px' }}>{currentYear}년 {currentQuarter}분기</span>
-          </div>
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <span style={{ color: '#2563eb', fontWeight: 'bold' }}>Lv.{level}</span>
-            <div style={{ flex: 1, height: '10px', background: '#e2e8f0', borderRadius: '5px' }}>
-              <div style={{ width: `${Math.min(exp % 100, 100)}%`, height: '100%', background: '#3b82f6' }} />
-            </div>
-          </div>
-        </div>
-        <button onClick={handleLogout} style={{ padding: '8px', background: '#ef4444', color: 'white', borderRadius: '8px', border: 'none', cursor: 'pointer' }}>로그아웃</button>
-      </div>
-
-      <div className="no-print" style={{ background: 'white', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '16px' }}>
-        <h3 style={{ margin: '0 0 12px 0', fontSize: '15px' }}>📝 사전 정보 입력</h3>
-        <input type="text" value={projectNumberInput} onChange={e => setProjectNumberInput(e.target.value)} placeholder="공사번호" style={{ width: '100%', padding: '10px', marginBottom: '8px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-        <input type="text" value={workTypeInput} onChange={e => setWorkTypeInput(e.target.value)} placeholder="작업공정" style={{ width: '100%', padding: '10px', marginBottom: '8px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-        <input type="text" value={workDescInput} onChange={e => setWorkDescInput(e.target.value)} placeholder="작업내용" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-      </div>
-
-      <div className="no-print" style={{ marginBottom: '16px' }}>
-        <label style={{ display: 'block', textAlign: 'center', padding: '30px', background: '#fff', border: '2px dashed #94a3b8', borderRadius: '12px', cursor: 'pointer' }}>
-          <div style={{ fontSize: '32px' }}>📸 사진 추가</div>
-          <input type="file" accept="image/*" multiple onChange={handleFileChange} style={{ display: 'none' }} />
-        </label>
-        {previewUrls.length > 0 && (
-          <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '10px 0' }}>
-            {previewUrls.map((url, i) => (
-              <div key={i} style={{ position: 'relative' }}>
-                <img src={url} alt="미리보기" style={{ width: '80px', height: '80px', borderRadius: '8px', objectFit: 'cover' }} />
-                <button onClick={() => removeFile(i)} style={{ position: 'absolute', top: 0, right: 0, background: 'black', color: 'white', border: 'none' }}>X</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <button className="no-print" onClick={handleUploadAndAnalyze} disabled={analyzing || files.length === 0} style={{ width: '100%', padding: '16px', background: files.length ? '#2563eb' : '#cbd5e1', color: 'white', border: 'none', borderRadius: '12px', cursor: 'pointer', fontWeight: 'bold' }}>일괄 분석하기</button>
-
-      {report && (
-        <div className={printItem ? "no-print" : "print-target"} style={{ marginTop: '20px', padding: '20px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
-          {isEditing ? (
-            <div className="no-print">
-              <textarea value={report} onChange={e => setReport(e.target.value)} style={{ width: '100%', minHeight: '300px', padding: '10px', boxSizing: 'border-box' }} />
-              <button onClick={handleUpdateReport} style={{ width: '100%', padding: '12px', background: '#3b82f6', color: 'white', marginTop: '10px', border: 'none' }}>저장</button>
-            </div>
-          ) : (
-            <>
-              <div ref={reportRef}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown></div>
-              <div className="no-print" style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                <button onClick={() => setIsEditing(true)} style={{ flex: 1, padding: '12px' }}>수정</button>
-                <button onClick={() => window.print()} style={{ flex: 1, padding: '12px', background: '#10b981', color: 'white', border: 'none' }}>PDF 인쇄</button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      <div className="no-print" style={{ marginTop: '30px' }}>
-        <button onClick={() => setShowPast(!showPast)} style={{ width: '100%', padding: '16px', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px' }}>과거 기록 보기 ({pastReports.length}건)</button>
-        {showPast && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
-            {pastReports.map((item, i) => (
-              <div key={i} style={{ padding: '16px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
-                <div style={{ color: '#2563eb', fontWeight: 'bold', marginBottom: '10px' }}>{new Date(item.created_at).toLocaleString()}</div>
-                {item.image_url && <img src={item.image_url} alt="사진" style={{ width: '100%', height: '150px', objectFit: 'cover', borderRadius: '8px', marginBottom: '10px' }} />}
-                <div style={{ maxHeight: '150px', overflowY: 'auto', background: '#f8fafc', padding: '10px', borderRadius: '8px' }}>
-                  <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown>
-                </div>
-                <button onClick={() => handlePrintPast(item)} style={{ width: '100%', marginTop: '10px', padding: '10px', background: '#1e293b', color: 'white', border: 'none', borderRadius: '8px' }}>인쇄</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {printItem && (
-        <div className="print-target" style={{ padding: '20px', background: 'white' }}>
-          <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown>
-          {printItem.image_url && <img src={printItem.image_url} alt="사진" style={{ width: '100%', maxHeight: '300px', objectFit: 'contain', marginTop: '20px' }} />}
-        </div>
-      )}
+  if (!isAuthenticated) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f8fafc' }}>
+      <form onSubmit={handleLogin} style={{ background: 'white', padding: '40px', borderRadius: '16px', textAlign: 'center' }}>
+        <h2>관리자 로그인</h2>
+        <input type="password" value={password} onChange={e => setPassword(e.target.value)} style={{ padding: '10px', marginBottom: '10px', width: '100%', boxSizing: 'border-box' }} autoFocus />
+        <button type="submit" style={{ padding: '10px', width: '100%', background: '#2563eb', color: 'white', border: 'none' }}>접속</button>
+      </form>
     </div>
   );
-}
 
-export default function Dashboard() {
-  return <Suspense fallback={<div style={{ padding: '40px', textAlign: 'center' }}>로딩중...</div>}><DashboardContent /></Suspense>;
+  return (
+    <div style={{ padding: '40px', maxWidth: '800px', margin: '0 auto', background: '#f8fafc', minHeight: '100vh', fontFamily: "'Pretendard', sans-serif" }}>
+      {loading && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '16px', textAlign: 'center', width: '300px' }}>
+            <h3>데이터 처리 중...</h3>
+            <div style={{ background: '#e2e8f0', borderRadius: '8px', height: '16px', marginTop: '10px' }}>
+              <div style={{ width: `${progress}%`, background: '#2563eb', height: '100%', transition: 'width 0.3s' }} />
+            </div>
+            <p>{progress}%</p>
+          </div>
+        </div>
+      )}
+
+      <div style={{ background: 'white', padding: '30px', borderRadius: '16px' }}>
+        <h1 style={{ margin: '0 0 20px 0' }}>👨‍💼 관리자 대시보드</h1>
+        
+        {/* 상단 탭 */}
+        <div style={{ display: 'flex', borderBottom: '2px solid #e2e8f0', marginBottom: '20px' }}>
+          <button onClick={() => setActiveTab('dashboard')} style={{ padding: '12px 24px', background: 'none', border: 'none', borderBottom: activeTab === 'dashboard' ? '3px solid #2563eb' : 'none', fontWeight: activeTab === 'dashboard' ? 'bold' : 'normal', color: activeTab === 'dashboard' ? '#2563eb' : '#64748b', cursor: 'pointer', fontSize: '16px' }}>보고서 엑셀 추출</button>
+          <button onClick={() => setActiveTab('tips')} style={{ padding: '12px 24px', background: 'none', border: 'none', borderBottom: activeTab === 'tips' ? '3px solid #2563eb' : 'none', fontWeight: activeTab === 'tips' ? 'bold' : 'normal', color: activeTab === 'tips' ? '#2563eb' : '#64748b', cursor: 'pointer', fontSize: '16px' }}>로딩 명언 관리</button>
+        </div>
+
+        {activeTab === 'dashboard' ? (
+          <>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+              <button onClick={() => setViewMode('month')} style={{ flex: 1, padding: '10px', background: viewMode === 'month' ? '#2563eb' : '#f8fafc', color: viewMode === 'month' ? '#fff' : '#000', border: '1px solid #cbd5e1', borderRadius: '8px' }}>월별 조회</button>
+              <button onClick={() => setViewMode('quarter')} style={{ flex: 1, padding: '10px', background: viewMode === 'quarter' ? '#2563eb' : '#f8fafc', color: viewMode === 'quarter' ? '#fff' : '#000', border: '1px solid #cbd5e1', borderRadius: '8px' }}>분기별 조회</button>
+            </div>
+            
+            <div style={{ background: '#f1f5f9', padding: '20px', borderRadius: '12px' }}>
+              {viewMode === 'month' ? (
+                <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} style={{ padding: '10px' }} />
+              ) : (
+                <>
+                  <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} style={{ padding: '10px', marginRight: '10px' }}>
+                    <option value="2025">2025년</option><option value="2026">2026년</option><option value="2027">2027년</option>
+                  </select>
+                  <select value={selectedQuarter} onChange={e => setSelectedQuarter(Number(e.target.value))} style={{ padding: '10px' }}>
+                    <option value={1}>1분기</option><option value={2}>2분기</option><option value={3}>3분기</option><option value={4}>4분기</option>
+                  </select>
+                </>
+              )}
+            </div>
+
+            <button onClick={exportToExcel} style={{ width: '100%', padding: '15px', background: '#10b981', color: 'white', border: 'none', borderRadius: '8px', marginTop: '20px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>
+              엑셀 다운로드 (총 {inspections.length}건)
+            </button>
+          </>
+        ) : (
+          <>
+            <form onSubmit={handleAddTip} style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+              <input type="text" value={newTip} onChange={e => setNewTip(e.target.value)} placeholder="새로운 안전 명언이나 공지사항 입력" style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }} />
+              <button type="submit" style={{ padding: '0 20px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>추가하기</button>
+            </form>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {tips.map(tip => (
+                <div key={tip.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', background: tip.is_active ? '#f8fafc' : '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: '8px', opacity: tip.is_active ? 1 : 0.5 }}>
+                  <span style={{ fontSize: '15px', color: '#1e293b' }}>{tip.content}</span>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={() => toggleTipActive(tip.id, tip.is_active)} style={{ padding: '8px 12px', background: tip.is_active ? '#eab308' : '#10b981', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>
+                      {tip.is_active ? '숨기기' : '노출하기'}
+                    </button>
+                    <button onClick={() => deleteTip(tip.id)} style={{ padding: '8px 12px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>삭제</button>
+                  </div>
+                </div>
+              ))}
+              {tips.length === 0 && <p style={{ textAlign: 'center', color: '#94a3b8', padding: '20px' }}>등록된 명언이 없습니다.</p>}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
