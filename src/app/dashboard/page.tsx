@@ -272,15 +272,13 @@ function DashboardContent() {
     }, 100); 
   };
 
-  // ★ 완벽한 브라우저 인쇄(프린트) 함수 추가
   const handlePrintPastReport = async (item: any) => {
-    setIsPdfGenerating(true); // 로딩 스피너 작동
-    setPrintItem(item); // 렌더링 타겟 마운트
+    setIsPdfGenerating(true);
+    setPrintItem(item); 
     
     setTimeout(async () => {
       const element = document.getElementById('past-report-pdf');
       if (element) {
-        // 모든 사진이 완벽하게 불러와질 때까지 비동기 대기
         const images = Array.from(element.getElementsByTagName('img'));
         await Promise.all(images.map(img => {
           if (img.complete) return Promise.resolve();
@@ -290,14 +288,10 @@ function DashboardContent() {
           });
         }));
       }
-      
-      // 로딩 스피너 종료
       setIsPdfGenerating(false);
-      
-      // 스피너가 완전히 사라진 직후에만 인쇄 창 호출
       setTimeout(() => {
         window.print();
-        setPrintItem(null); // 인쇄 종료 후 타겟 해제
+        setPrintItem(null);
       }, 300);
     }, 100);
   };
@@ -357,14 +351,24 @@ function DashboardContent() {
     setAnalyzing(true); setReport(null); setIsEditing(false);
     try {
       const uploadedUrls: string[] = [];
+      
+      // ★ 스토리지 업로드 시 에러를 철저하게 감지하여 DB 누락을 방지
       for (const f of files) {
         const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${f.name.split('.').pop()}`;
         const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, f);
-        if (!uploadError) {
-          const { data } = supabase.storage.from('inspections').getPublicUrl(fileName);
-          if (data?.publicUrl) uploadedUrls.push(data.publicUrl);
+        
+        if (uploadError) {
+          console.error("스토리지 업로드 에러:", uploadError);
+          alert(`🚨 [사진 DB 연결 실패]\nSupabase에 'inspections' 스토리지 버킷이 없거나 업로드 권한이 막혀있습니다.\nSQL Editor에서 버킷 생성 쿼리를 실행해주세요.\n\n에러 내용: ${uploadError.message}`);
+          throw new Error('스토리지 사진 저장 실패');
+        }
+        
+        const { data } = supabase.storage.from('inspections').getPublicUrl(fileName);
+        if (data?.publicUrl) {
+          uploadedUrls.push(data.publicUrl);
         }
       }
+      
       const imageUrlsString = uploadedUrls.join(',');
 
       const rawDate = new Date(files[0].lastModified); 
@@ -386,6 +390,7 @@ function DashboardContent() {
       setFiles([]); 
       setReport(resData.report);
       
+      // ★ 텍스트와 완벽하게 연결된 사진 주소(imageUrlsString)를 DB에 최종 Insert
       const { data: insertedData, error: dbError } = await supabase.from('inspections').insert([
         { worker_id: currentWorkerId, image_url: imageUrlsString, ai_report_text: resData.report, status: '완료' }
       ]).select().single();
@@ -414,7 +419,8 @@ function DashboardContent() {
       await supabase.from('workers').update({ exp: exp + gainedExp, level: calcLevel }).eq('id', currentWorkerId);
       
     } catch (err: any) { 
-      alert(`오류: ${err.message}`); 
+      // 에러가 나면 콘솔뿐 아니라 알림창으로 확실히 표시
+      alert(`오류 발생: ${err.message}`); 
     } finally { 
       setAnalyzing(false); 
     }
@@ -435,7 +441,6 @@ function DashboardContent() {
 
   return (
     <div style={{ maxWidth: '640px', margin: '0 auto', padding: '16px', fontFamily: "'Pretendard', sans-serif" }}>
-      {/* ★ 백지 렌더링 방지를 위한 완벽한 인쇄용 CSS */}
       <style dangerouslySetInnerHTML={{ __html: `
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -542,7 +547,6 @@ function DashboardContent() {
 
       <button className="no-print" onClick={handleUploadAndAnalyze} disabled={analyzing || files.length === 0} style={{ width: '100%', padding: '16px', background: files.length ? '#2563eb' : theme.btnCancel, color: files.length ? 'white' : theme.textSub, border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>일괄 분석하기</button>
 
-      {/* ★ 현재 작성 중인 새 보고서 렌더링 영역 (인쇄 시 자동 치환됨) */}
       {report && (
         <div className={printItem ? "no-print" : "print-area"} style={{ marginTop: '20px', padding: '20px', background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '0' }}>
           {isEditing ? (
@@ -604,7 +608,7 @@ function DashboardContent() {
             {pastReports.map((item, i) => {
               const isExpanded = expandedReportId === item.id;
               const hasDanger = item.ai_report_text?.includes('불량');
-              const savedUrls = item.image_url ? item.image_url.split(',') : [];
+              const savedUrls = item.image_url ? item.image_url.split(',').filter(Boolean) : [];
               const reportDate = new Date(item.created_at).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
 
               return (
@@ -642,7 +646,6 @@ function DashboardContent() {
                       )}
                       
                       <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                        {/* ★ 인쇄 버튼 클릭 시 handlePrintPastReport 실행 */}
                         <button onClick={() => handlePrintPastReport(item)} style={{ flex: 1, padding: '14px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>인쇄</button>
                         <button onClick={() => handleDownloadPastPDF(item)} style={{ flex: 1, padding: '14px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>PDF 다운로드</button>
                       </div>
@@ -655,7 +658,6 @@ function DashboardContent() {
         )}
       </div>
 
-      {/* ★ 과거 보고서 인쇄 및 PDF용 투명 컨테이너 (좌표 꼼수 대신 .print-only 방식 사용) */}
       {printItem && (() => {
         const pastDate = new Date(printItem.created_at);
         const pastDateStr = `${pastDate.getFullYear()}-${String(pastDate.getMonth() + 1).padStart(2, '0')}-${String(pastDate.getDate()).padStart(2, '0')}`;
