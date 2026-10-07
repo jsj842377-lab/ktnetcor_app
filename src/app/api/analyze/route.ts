@@ -30,7 +30,6 @@ export async function POST(req: NextRequest) {
       })
     );
 
-    // ★ 1. 구글 서버에 현재 API 키로 사용 가능한 전체 모델 목록을 실시간으로 요청합니다.
     const modelListRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
     const modelListData = await modelListRes.json();
     
@@ -41,13 +40,12 @@ export async function POST(req: NextRequest) {
         .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
         .map((m: any) => m.name.replace('models/', ''));
         
-      // ★ 2. 사용 가능한 모델 중 사진 분석에 최적화된 모델을 우선순위대로 자동 탐지하여 할당합니다.
       targetModelName = 
+        availableModels.find((m: string) => m.includes('3.8-flash')) ||
+        availableModels.find((m: string) => m.includes('2.5-flash')) || 
         availableModels.find((m: string) => m.includes('1.5-flash')) ||
         availableModels.find((m: string) => m.includes('flash')) || 
-        availableModels.find((m: string) => m.includes('vision')) || 
-        availableModels.find((m: string) => m.includes('pro')) || 
-        availableModels[0];
+        availableModels[0]; 
     }
 
     if (!targetModelName) {
@@ -56,6 +54,7 @@ export async function POST(req: NextRequest) {
 
     console.log('✅ [디버깅] 자동 선택되어 실행된 AI 모델:', targetModelName);
 
+    // ★ 중복을 제거하고 단 한 번만 선언되도록 수정
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: targetModelName });
     
