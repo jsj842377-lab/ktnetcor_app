@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTheme } from '@/context/ThemeContext';
 import { supabase } from '@/utils/supabase';
-import * as XLSX from 'xlsx'; // 엑셀 다운로드 라이브러리
+import * as XLSX from 'xlsx';
 
 export default function AdminPage() {
   const router = useRouter();
@@ -20,10 +20,11 @@ export default function AdminPage() {
   const [filteredReports, setFilteredReports] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   
-  // 필터링 상태 (연도 및 분기)
+  // 필터링 상태 (연도, 분기, 이름 검색)
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<string>(currentYear.toString());
   const [selectedQuarter, setSelectedQuarter] = useState<string>('ALL');
+  const [searchName, setSearchName] = useState<string>(''); 
 
   // 다크모드 대응 테마
   const theme = isDarkMode ? {
@@ -39,13 +40,13 @@ export default function AdminPage() {
     e.preventDefault();
     if (adminName === '전현진' && adminPwd === '1234') {
       setIsAuthorized(true);
-      fetchReports(); // 로그인 성공 시 데이터 즉시 로드
+      fetchReports();
     } else {
       alert('관리자 이름 또는 비밀번호가 일치하지 않습니다.');
     }
   };
 
-  // DB에서 모든 보고서 가져오기 (workers 테이블과 Join하여 작성자 이름 획득)
+  // DB에서 모든 보고서 가져오기
   const fetchReports = async () => {
     setIsLoading(true);
     try {
@@ -62,7 +63,7 @@ export default function AdminPage() {
       if (error) throw error;
       if (data) {
         setAllReports(data);
-        applyFilters(data, selectedYear, selectedQuarter);
+        applyFilters(data, selectedYear, selectedQuarter, searchName);
       }
     } catch (err: any) {
       alert(`데이터를 불러오지 못했습니다: ${err.message}`);
@@ -71,8 +72,8 @@ export default function AdminPage() {
     }
   };
 
-  // 연도 및 분기에 따른 데이터 필터링 로직
-  const applyFilters = (data: any[], year: string, quarter: string) => {
+  // 필터링 로직
+  const applyFilters = (data: any[], year: string, quarter: string, nameSearch: string) => {
     let filtered = data.filter(item => {
       const itemDate = new Date(item.created_at);
       const itemYear = itemDate.getFullYear().toString();
@@ -81,7 +82,7 @@ export default function AdminPage() {
 
     if (quarter !== 'ALL') {
       filtered = filtered.filter(item => {
-        const month = new Date(item.created_at).getMonth() + 1; // 1~12
+        const month = new Date(item.created_at).getMonth() + 1; 
         if (quarter === 'Q1') return month >= 1 && month <= 3;
         if (quarter === 'Q2') return month >= 4 && month <= 6;
         if (quarter === 'Q3') return month >= 7 && month <= 9;
@@ -89,46 +90,72 @@ export default function AdminPage() {
         return true;
       });
     }
+
+    if (nameSearch.trim() !== '') {
+      filtered = filtered.filter(item => {
+        const workerName = item.workers?.worker_name || '';
+        return workerName.includes(nameSearch.trim());
+      });
+    }
+
     setFilteredReports(filtered);
   };
 
-  // 필터 드롭다운 값이 바뀔 때마다 필터링 재실행
   useEffect(() => {
     if (isAuthorized) {
-      applyFilters(allReports, selectedYear, selectedQuarter);
+      applyFilters(allReports, selectedYear, selectedQuarter, searchName);
     }
-  }, [selectedYear, selectedQuarter, allReports, isAuthorized]);
+  }, [selectedYear, selectedQuarter, searchName, allReports, isAuthorized]);
 
-  // 엑셀 다운로드 로직
-  const handleDownloadExcel = () => {
+  // ★ AI 마크다운 원문에서 특정 데이터(공사번호, 공정)만 정규식으로 빼내는 헬퍼 함수
+  const extractInfoFromMarkdown = (md: string) => {
+    const mdString = md || '';
+    const projNumMatch = mdString.match(/\*\*공사번호\*\*\s*\|\s*([^|]+?)\s*\|/);
+    const workTypeMatch = mdString.match(/\*\*작업공정\*\*\s*\|\s*([^|]+?)\s*\|/);
+    
+    return {
+      projNum: projNumMatch ? projNumMatch[1].trim() : '미상',
+      workType: workTypeMatch ? workTypeMatch[1].trim() : '미상',
+      hasDanger: mdString.includes('불량')
+    };
+  };
+
+  // ★ 요청하신 엑셀 양식 포맷팅 및 다운로드 로직 (두 가지 버전 대응)
+  const handleDownloadExcel = (reportType: '자재실사' | '안전점검') => {
     if (filteredReports.length === 0) return alert('다운로드할 데이터가 없습니다.');
 
-    // 엑셀에 맞게 데이터 포맷팅
-    const exportData = filteredReports.map((report, index) => {
-      const isTrashed = report.deleted_at ? '휴지통(삭제예정)' : '정상';
-      const hasDanger = report.ai_report_text?.includes('불량') ? '위험요소 검출' : '양호';
+    const exportData = filteredReports.map((report) => {
+      const { projNum, workType, hasDanger } = extractInfoFromMarkdown(report.ai_report_text);
+      
+      const dateObj = new Date(report.created_at);
+      const dateStr = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
+      const ampm = dateObj.getHours() < 12 ? '오전' : '오후';
+      
+      // 요청 양식 준수: 불량 발견 시 X(미흡), 완벽할 시 O(양호)
+      const safetyStatus = hasDanger ? 'X' : 'O';
       
       return {
-        '순번': index + 1,
-        '등록일시': new Date(report.created_at).toLocaleString('ko-KR'),
-        '점검자명': report.workers?.worker_name || '알수없음',
-        '상태': isTrashed,
-        '요약': hasDanger,
-        'AI 마크다운 원문': report.ai_report_text || '내용 없음',
-        '첨부사진URL': report.image_url || '사진 없음'
+        '일자': dateStr,
+        '구분': ampm,
+        '인원': report.workers?.worker_name || '미상',
+        '협력사': '경기설계팀', // 현재 DB상 부서/협력사 컬럼이 없어 임시 고정값 (향후 DB 확장 시 연동)
+        '공사번호': projNum,
+        '공사유형': workType,
+        '안전작업 이행 여부': safetyStatus
       };
     });
 
-    // 워크시트 생성 및 엑셀 파일 저장
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "안전점검 데이터");
+    XLSX.utils.book_append_sheet(workbook, worksheet, reportType);
     
-    const fileName = `현장안전점검_${selectedYear}년_${selectedQuarter === 'ALL' ? '전체' : selectedQuarter}.xlsx`;
+    const nameStr = searchName.trim() ? `_${searchName}` : '';
+    // 파일명도 버튼 종류에 맞춰 자재실사.xlsx / 안전점검.xlsx 로 분리 저장
+    const fileName = `협력사관리_${reportType}_${selectedYear}년_${selectedQuarter === 'ALL' ? '전체' : selectedQuarter}${nameStr}.xlsx`;
     XLSX.writeFile(workbook, fileName);
   };
 
-  // 🔒 로그인 화면 (isAuthorized === false)
+  // 🔒 로그인 화면
   if (!isAuthorized) {
     return (
       <div style={{ minHeight: '100vh', background: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Pretendard', sans-serif" }}>
@@ -146,23 +173,29 @@ export default function AdminPage() {
     );
   }
 
-  // 🔓 관리자 대시보드 (isAuthorized === true)
+  // 🔓 관리자 대시보드
   return (
     <div style={{ minHeight: '100vh', background: theme.bg, padding: '40px 16px', fontFamily: "'Pretendard', sans-serif" }}>
-      <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
+      <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
         
-        {/* 상단 헤더 영역 */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
           <div>
             <h2 style={{ margin: '0 0 8px 0', fontSize: '24px', color: theme.textMain }}>👑 전현진 관리자님</h2>
-            <p style={{ margin: 0, color: theme.textSub, fontSize: '14px' }}>직원들의 현장 점검 기록을 통합 관리합니다.</p>
+            <p style={{ margin: 0, color: theme.textSub, fontSize: '14px' }}>협력사 관리 및 현장 점검 기록을 통합 제어합니다.</p>
           </div>
           <button onClick={() => router.push('/')} style={{ padding: '10px 20px', background: theme.btnPrimary, color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>메인으로 나가기</button>
         </div>
 
-        {/* 필터 및 다운로드 영역 */}
         <div style={{ background: theme.cardBg, padding: '20px', borderRadius: '8px', border: `1px solid ${theme.border}`, marginBottom: '24px', display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <input 
+              type="text" 
+              placeholder="직원 이름 검색..." 
+              value={searchName} 
+              onChange={(e) => setSearchName(e.target.value)} 
+              style={{ padding: '10px', borderRadius: '4px', border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.textMain, fontWeight: 'bold', width: '160px' }} 
+            />
+
             <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)} style={{ padding: '10px', borderRadius: '4px', border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.textMain, fontWeight: 'bold' }}>
               <option value={(currentYear).toString()}>{currentYear}년</option>
               <option value={(currentYear - 1).toString()}>{currentYear - 1}년</option>
@@ -178,52 +211,55 @@ export default function AdminPage() {
             </select>
           </div>
 
-          <button onClick={handleDownloadExcel} style={{ padding: '12px 20px', background: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            📊 엑셀 다운로드
-          </button>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button onClick={() => handleDownloadExcel('자재실사')} style={{ padding: '12px 16px', background: '#f59e0b', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              📦 자재실사 엑셀
+            </button>
+            <button onClick={() => handleDownloadExcel('안전점검')} style={{ padding: '12px 16px', background: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              👷 안전점검 엑셀
+            </button>
+          </div>
         </div>
 
-        {/* 데이터 테이블 영역 */}
+        {/* 엑셀 양식과 맞춘 관리자 화면 테이블 */}
         <div style={{ background: theme.cardBg, borderRadius: '8px', border: `1px solid ${theme.border}`, overflowX: 'auto' }}>
           {isLoading ? (
             <div style={{ padding: '60px', textAlign: 'center', color: theme.textSub }}>데이터를 불러오는 중입니다...</div>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '700px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px' }}>
               <thead>
                 <tr style={{ background: theme.thBg, borderBottom: `2px solid ${theme.border}` }}>
-                  <th style={{ padding: '16px', textAlign: 'left', color: theme.textMain, fontSize: '14px', width: '150px' }}>등록 일시</th>
-                  <th style={{ padding: '16px', textAlign: 'left', color: theme.textMain, fontSize: '14px', width: '100px' }}>점검자</th>
-                  <th style={{ padding: '16px', textAlign: 'left', color: theme.textMain, fontSize: '14px', width: '100px' }}>상태</th>
-                  <th style={{ padding: '16px', textAlign: 'left', color: theme.textMain, fontSize: '14px' }}>AI 점검 요약</th>
+                  <th style={{ padding: '16px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>일자</th>
+                  <th style={{ padding: '16px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>구분</th>
+                  <th style={{ padding: '16px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>인원</th>
+                  <th style={{ padding: '16px', textAlign: 'left', color: theme.textMain, fontSize: '13px' }}>공사번호</th>
+                  <th style={{ padding: '16px', textAlign: 'left', color: theme.textMain, fontSize: '13px' }}>공사유형</th>
+                  <th style={{ padding: '16px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>안전점검(O/X)</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredReports.length === 0 ? (
                   <tr>
-                    <td colSpan={4} style={{ padding: '40px', textAlign: 'center', color: theme.textSub }}>해당 조건의 데이터가 없습니다.</td>
+                    <td colSpan={6} style={{ padding: '40px', textAlign: 'center', color: theme.textSub }}>해당 조건의 데이터가 없습니다.</td>
                   </tr>
                 ) : (
                   filteredReports.map((report) => {
-                    const isTrashed = report.deleted_at;
-                    const hasDanger = report.ai_report_text?.includes('불량');
-                    const dateStr = new Date(report.created_at).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-                    
+                    const { projNum, workType, hasDanger } = extractInfoFromMarkdown(report.ai_report_text);
+                    const dateObj = new Date(report.created_at);
+                    const dateStr = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
+                    const ampm = dateObj.getHours() < 12 ? '오전' : '오후';
+
                     return (
                       <tr key={report.id} style={{ borderBottom: `1px solid ${theme.border}` }}>
-                        <td style={{ padding: '16px', color: theme.textMain, fontSize: '14px' }}>{dateStr}</td>
-                        <td style={{ padding: '16px', color: theme.textMain, fontSize: '14px', fontWeight: 'bold' }}>{report.workers?.worker_name || '알수없음'}</td>
-                        <td style={{ padding: '16px' }}>
-                          <span style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', background: isTrashed ? '#ef4444' : '#10b981', color: 'white' }}>
-                            {isTrashed ? '휴지통' : '정상'}
+                        <td style={{ padding: '16px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>{dateStr}</td>
+                        <td style={{ padding: '16px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>{ampm}</td>
+                        <td style={{ padding: '16px', textAlign: 'center', color: theme.textMain, fontSize: '13px', fontWeight: 'bold' }}>{report.workers?.worker_name || '미상'}</td>
+                        <td style={{ padding: '16px', color: theme.textSub, fontSize: '13px' }}>{projNum}</td>
+                        <td style={{ padding: '16px', color: theme.textSub, fontSize: '13px' }}>{workType}</td>
+                        <td style={{ padding: '16px', textAlign: 'center' }}>
+                          <span style={{ padding: '4px 12px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', background: hasDanger ? '#ef4444' : '#10b981', color: 'white' }}>
+                            {hasDanger ? 'X (미흡)' : 'O (양호)'}
                           </span>
-                        </td>
-                        <td style={{ padding: '16px', color: theme.textSub, fontSize: '13px' }}>
-                          {hasDanger ? (
-                            <span style={{ color: '#ef4444', fontWeight: 'bold' }}>[위험요소 포함] </span>
-                          ) : (
-                            <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>[전체 양호] </span>
-                          )}
-                          {report.ai_report_text ? report.ai_report_text.substring(0, 60) + '...' : '내용 없음'}
                         </td>
                       </tr>
                     );
