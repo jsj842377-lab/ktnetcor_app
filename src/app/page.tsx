@@ -41,7 +41,7 @@ export default function LoginPage() {
         
         {/* ★ 수정된 부분: "안전점검 시스템" -> "협력사관리시스템" */}
         <h2 style={{ margin: '0 0 8px 0', fontSize: '22px', color: '#0f172a', fontWeight: 'bold' }}>
-          협력사관리시스템
+          협력사 관리 시스템
         </h2>
         
         <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '30px' }}>
