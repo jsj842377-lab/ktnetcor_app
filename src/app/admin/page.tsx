@@ -35,7 +35,7 @@ export default function AdminPage() {
     border: '#cbd5e1', btnPrimary: '#2563eb', inputBg: '#f8fafc', thBg: '#f1f5f9'
   };
 
-  // 로그인 로직
+  // ★ 관리자 내부 로그인 로직 (조건 변경: 관리자 / 1234)
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (adminName === '관리자' && adminPwd === '1234') {
@@ -107,7 +107,6 @@ export default function AdminPage() {
     }
   }, [selectedYear, selectedQuarter, searchName, allReports, isAuthorized]);
 
-  // ★ AI 마크다운 원문에서 특정 데이터(공사번호, 공정)만 정규식으로 빼내는 헬퍼 함수
   const extractInfoFromMarkdown = (md: string) => {
     const mdString = md || '';
     const projNumMatch = mdString.match(/\*\*공사번호\*\*\s*\|\s*([^|]+?)\s*\|/);
@@ -120,7 +119,6 @@ export default function AdminPage() {
     };
   };
 
-  // ★ 요청하신 엑셀 양식 포맷팅 및 다운로드 로직 (두 가지 버전 대응)
   const handleDownloadExcel = (reportType: '자재실사' | '안전점검') => {
     if (filteredReports.length === 0) return alert('다운로드할 데이터가 없습니다.');
 
@@ -131,14 +129,13 @@ export default function AdminPage() {
       const dateStr = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
       const ampm = dateObj.getHours() < 12 ? '오전' : '오후';
       
-      // 요청 양식 준수: 불량 발견 시 X(미흡), 완벽할 시 O(양호)
       const safetyStatus = hasDanger ? 'X' : 'O';
       
       return {
         '일자': dateStr,
         '구분': ampm,
         '인원': report.workers?.worker_name || '미상',
-        '협력사': '경기설계팀', // 현재 DB상 부서/협력사 컬럼이 없어 임시 고정값 (향후 DB 확장 시 연동)
+        '협력사': '경기설계팀', 
         '공사번호': projNum,
         '공사유형': workType,
         '안전작업 이행 여부': safetyStatus
@@ -150,7 +147,6 @@ export default function AdminPage() {
     XLSX.utils.book_append_sheet(workbook, worksheet, reportType);
     
     const nameStr = searchName.trim() ? `_${searchName}` : '';
-    // 파일명도 버튼 종류에 맞춰 자재실사.xlsx / 안전점검.xlsx 로 분리 저장
     const fileName = `협력사관리_${reportType}_${selectedYear}년_${selectedQuarter === 'ALL' ? '전체' : selectedQuarter}${nameStr}.xlsx`;
     XLSX.writeFile(workbook, fileName);
   };
@@ -163,7 +159,7 @@ export default function AdminPage() {
           <div style={{ fontSize: '40px', marginBottom: '16px' }}>🛡️</div>
           <h2 style={{ margin: '0 0 24px 0', fontSize: '20px', color: theme.textMain }}>최고 관리자 로그인</h2>
           
-          <input type="text" placeholder="관리자 이름 (예: 전현진)" value={adminName} onChange={e => setAdminName(e.target.value)} style={{ width: '100%', padding: '14px', marginBottom: '12px', borderRadius: '4px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain, fontSize: '14px' }} required />
+          <input type="text" placeholder="관리자 이름 (예: 관리자)" value={adminName} onChange={e => setAdminName(e.target.value)} style={{ width: '100%', padding: '14px', marginBottom: '12px', borderRadius: '4px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain, fontSize: '14px' }} required />
           <input type="password" placeholder="비밀번호" value={adminPwd} onChange={e => setAdminPwd(e.target.value)} style={{ width: '100%', padding: '14px', marginBottom: '24px', borderRadius: '4px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain, fontSize: '14px' }} required />
           
           <button type="submit" style={{ width: '100%', padding: '16px', background: theme.btnPrimary, color: 'white', border: 'none', borderRadius: '4px', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer', marginBottom: '12px' }}>관리자 접속</button>
@@ -180,7 +176,8 @@ export default function AdminPage() {
         
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
           <div>
-            <h2 style={{ margin: '0 0 8px 0', fontSize: '24px', color: theme.textMain }}>👑 전현진 관리자님</h2>
+            {/* ★ 문구 변경 완료 */}
+            <h2 style={{ margin: '0 0 8px 0', fontSize: '24px', color: theme.textMain }}>👑 최고 관리자님</h2>
             <p style={{ margin: 0, color: theme.textSub, fontSize: '14px' }}>협력사 관리 및 현장 점검 기록을 통합 제어합니다.</p>
           </div>
           <button onClick={() => router.push('/')} style={{ padding: '10px 20px', background: theme.btnPrimary, color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>메인으로 나가기</button>
@@ -221,7 +218,6 @@ export default function AdminPage() {
           </div>
         </div>
 
-        {/* 엑셀 양식과 맞춘 관리자 화면 테이블 */}
         <div style={{ background: theme.cardBg, borderRadius: '8px', border: `1px solid ${theme.border}`, overflowX: 'auto' }}>
           {isLoading ? (
             <div style={{ padding: '60px', textAlign: 'center', color: theme.textSub }}>데이터를 불러오는 중입니다...</div>

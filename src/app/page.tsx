@@ -20,8 +20,8 @@ export default function LoginPage() {
       return;
     }
     
-    // ★ 관리자 다이렉트 라우팅 로직: 전현진/1234 입력 시 관리자 페이지로 즉시 이동
-    if (workerName === '전현진' && password === '1234') {
+    // ★ 수정된 로직: '관리자' / '1234' 입력 시 최고 관리자 페이지로 즉시 이동
+    if (workerName === '관리자' && password === '1234') {
       router.push('/admin');
       return;
     }
@@ -39,9 +39,8 @@ export default function LoginPage() {
       >
         <div style={{ fontSize: '48px', marginBottom: '16px' }}>👷</div>
         
-        {/* ★ 수정된 부분: "안전점검 시스템" -> "협력사관리시스템" */}
         <h2 style={{ margin: '0 0 8px 0', fontSize: '22px', color: '#0f172a', fontWeight: 'bold' }}>
-          협력사 관리 시스템
+          협력사관리시스템
         </h2>
         
         <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '30px' }}>
@@ -50,7 +49,7 @@ export default function LoginPage() {
         
         <input 
           type="text" 
-          placeholder="이름" 
+          placeholder="이름 (관리자 접속 시 '관리자' 입력)" 
           value={workerName} 
           onChange={e => setWorkerName(e.target.value)} 
           style={{ width: '100%', padding: '14px', marginBottom: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box', background: '#f1f5f9', color: '#0f172a', fontSize: '15px' }} 
