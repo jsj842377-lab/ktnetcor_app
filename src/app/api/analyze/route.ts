@@ -13,6 +13,8 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const files = formData.getAll('images') as File[];
     const photoDate = formData.get('photoDate') as string || '알 수 없음';
+    // ★ 프론트엔드(카카오 API)로부터 변환이 완료된 정확한 한글 주소를 전달받음
+    const photoLocation = formData.get('photoLocation') as string || '위치 정보 없음'; 
     const projectNumber = formData.get('projectNumber') as string || '미상';
     const workType = formData.get('workType') as string || '일반작업';
     const workDesc = formData.get('workDesc') as string || '현장 점검';
@@ -26,10 +28,11 @@ export async function POST(req: NextRequest) {
       files.map(async (file) => {
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
-        return { inlineData: { data: buffer.toString('base64'), mimeType: file.type } };
+        return { inlineData: { data: buffer.toString('base64'), mimeType: file.type || 'image/jpeg' } };
       })
     );
 
+    // ★ 1. 구글 서버에 현재 API 키로 사용 가능한 전체 모델 목록 요청
     const modelListRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
     const modelListData = await modelListRes.json();
     
@@ -40,6 +43,7 @@ export async function POST(req: NextRequest) {
         .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
         .map((m: any) => m.name.replace('models/', ''));
         
+      // ★ 2. 최신 3.8-flash 모델을 1순위로 자동 탐지하는 폴백 로직
       targetModelName = 
         availableModels.find((m: string) => m.includes('3.8-flash')) ||
         availableModels.find((m: string) => m.includes('2.5-flash')) || 
@@ -49,15 +53,15 @@ export async function POST(req: NextRequest) {
     }
 
     if (!targetModelName) {
-      throw new Error('이 API 키로는 사용할 수 있는 AI 모델이 아예 없습니다. 구글 AI 스튜디오에서 키를 새로 발급받아주세요.');
+      throw new Error('이 API 키로는 사용할 수 있는 AI 모델이 아예 없습니다.');
     }
 
     console.log('✅ [디버깅] 자동 선택되어 실행된 AI 모델:', targetModelName);
 
-    // ★ 중복을 제거하고 단 한 번만 선언되도록 수정
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: targetModelName });
     
+    // ★ 3. 주소가 완벽하게 주입되는 고도화된 프롬프트 양식
     const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진들을 꼼꼼히 분석하여, 반드시 아래의 [안전점검 결과보고서] 양식과 100% 동일한 마크다운(Markdown) 표 형태로 결과를 작성해주세요.
 
 [작성 지침]
@@ -79,7 +83,7 @@ export async function POST(req: NextRequest) {
 |---|---|---|---|
 | **공사번호** | ${projectNumber} | **점검일자** | ${photoDate} |
 | **작업공정** | ${workType} | **점검자** | ${inspector} |
-| **작업내용** | ${workDesc} | | |
+| **작업내용** | ${workDesc} | **촬영위치** | ${photoLocation} |
 
 #### ■ 안전점검 항목
 | 점검항목 | 결과(양호/불량) | 조치사항 | 비고 |
@@ -95,6 +99,7 @@ export async function POST(req: NextRequest) {
     let retries = 0;
     const maxRetries = 2;
     
+    // 할당량 초과(429) 및 서버 지연(503)을 방어하는 재시도 로직
     while (retries < maxRetries) {
       try {
         result = await model.generateContent([prompt, ...imageParts]);

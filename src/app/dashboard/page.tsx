@@ -409,7 +409,7 @@ function DashboardContent() {
       const uploadedUrls: string[] = [];
       
       for (const f of files) {
-        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${f.name.split('.').pop()}`;
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${f.name ? f.name.split('.').pop() : 'png'}`;
         const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, f);
         
         if (uploadError) {
