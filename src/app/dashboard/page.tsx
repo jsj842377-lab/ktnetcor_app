@@ -601,7 +601,7 @@ function DashboardContent() {
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', alignItems: 'center' }}>
-            <h2 style={{ margin: 0, fontSize: '16px', color: theme.textMain }}>{workerName}</h2><span style={{ fontSize: '11px', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '0' }}>경기설계팀</span>
+            <h2 style={{ margin: 0, fontSize: '16px', color: theme.textMain }}>{workerName}</h2><span style={{ fontSize: '11px', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '0' }}>경기서부설계팀</span>
           </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <span style={{ color: '#2563eb', fontWeight: 'bold' }}>Lv.{level}</span>
