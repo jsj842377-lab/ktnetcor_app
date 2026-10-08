@@ -11,7 +11,7 @@ import localforage from 'localforage';
 import { useTheme } from '@/context/ThemeContext';
 import exifr from 'exifr'; 
 
-const ALLOWED_WORKERS = ['전소정', '김철수', '이영희', '박지민', '최동훈', '정유진', '강민재', '조수빈', '윤건우', '홍길동'];
+const ALLOWED_WORKERS = ['전현진', '김관희', '김용', '박상원', '박용화', '박현지', '안주형', '윤성우', '임동균', '김명현'];
 
 function DashboardContent() {
   const searchParams = useSearchParams();

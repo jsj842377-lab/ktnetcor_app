@@ -38,7 +38,7 @@ export default function AdminPage() {
   // 로그인 로직
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (adminName === '전현진' && adminPwd === '1234') {
+    if (adminName === '관리자' && adminPwd === '1234') {
       setIsAuthorized(true);
       fetchReports();
     } else {
