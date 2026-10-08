@@ -297,7 +297,14 @@ function DashboardContent() {
   };
 
   const toggleGender = () => { const newGender = gender === 'M' ? 'F' : 'M'; setGender(newGender); localStorage.setItem(`kt_gender_${workerName}`, newGender); };
-  const getCharacterEmoji = () => { if (level === 1) return '🐣'; if (level < 3) return gender === 'M' ? '👦' : '👧'; return gender === 'M' ? '👨‍🔧' : '👩‍🔧'; };
+  
+  // ★ 이모지 대신 로컬 경로의 이미지를 불러오는 함수
+  const getCharacterImage = () => {
+    if (level === 1) return gender === 'M' ? '/characters/level1_m.png' : '/characters/level1_f.png'; 
+    if (level < 3) return gender === 'M' ? '/characters/level2_m.png' : '/characters/level2_f.png';
+    return gender === 'M' ? '/characters/level3_m.png' : '/characters/level3_f.png'; 
+  };
+
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault(); if (!oldPwd || !newPwd) return alert('모두 입력해주세요.');
     const { data } = await supabase.from('workers').select('password').eq('id', workerId).single();
@@ -305,6 +312,7 @@ function DashboardContent() {
     await supabase.from('workers').update({ password: newPwd }).eq('id', workerId);
     alert('비밀번호가 성공적으로 변경되었습니다.'); setShowSettingsModal(false); setOldPwd(''); setNewPwd('');
   };
+  
   const handleLogout = () => { 
     if(window.confirm('정말 로그아웃 하시겠습니까?')) {
       localStorage.removeItem('kt_current_worker');
@@ -352,14 +360,13 @@ function DashboardContent() {
     try {
       const uploadedUrls: string[] = [];
       
-      // ★ 스토리지 업로드 시 에러를 철저하게 감지하여 DB 누락을 방지
       for (const f of files) {
         const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${f.name.split('.').pop()}`;
         const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, f);
         
         if (uploadError) {
           console.error("스토리지 업로드 에러:", uploadError);
-          alert(`🚨 [사진 DB 연결 실패]\nSupabase에 'inspections' 스토리지 버킷이 없거나 업로드 권한이 막혀있습니다.\nSQL Editor에서 버킷 생성 쿼리를 실행해주세요.\n\n에러 내용: ${uploadError.message}`);
+          alert(`🚨 [사진 DB 연결 실패]\nSupabase에 'inspections' 스토리지 버킷이 없거나 업로드 권한이 막혀있습니다.\n\n에러 내용: ${uploadError.message}`);
           throw new Error('스토리지 사진 저장 실패');
         }
         
@@ -390,7 +397,6 @@ function DashboardContent() {
       setFiles([]); 
       setReport(resData.report);
       
-      // ★ 텍스트와 완벽하게 연결된 사진 주소(imageUrlsString)를 DB에 최종 Insert
       const { data: insertedData, error: dbError } = await supabase.from('inspections').insert([
         { worker_id: currentWorkerId, image_url: imageUrlsString, ai_report_text: resData.report, status: '완료' }
       ]).select().single();
@@ -419,7 +425,6 @@ function DashboardContent() {
       await supabase.from('workers').update({ exp: exp + gainedExp, level: calcLevel }).eq('id', currentWorkerId);
       
     } catch (err: any) { 
-      // 에러가 나면 콘솔뿐 아니라 알림창으로 확실히 표시
       alert(`오류 발생: ${err.message}`); 
     } finally { 
       setAnalyzing(false); 
@@ -496,9 +501,19 @@ function DashboardContent() {
       )}
 
       <div className="no-print" style={{ padding: '16px', borderRadius: '0', background: theme.cardBg, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px', border: `1px solid ${theme.border}` }}>
-        <div style={{ fontSize: '36px', padding: '8px', background: 'transparent', borderRadius: '50%', position: 'relative' }}>
-          {getCharacterEmoji()}
-          <button onClick={toggleGender} style={{ position: 'absolute', bottom: '-10px', right: '-10px', background: '#475569', color: 'white', border: 'none', borderRadius: '50%', width: '24px', height: '24px', fontSize: '12px', cursor: 'pointer' }}>🔄</button>
+        {/* ★ 이모지 영역 대신 3D 캐릭터가 들어가는 부분 */}
+        <div style={{ padding: '4px', background: 'transparent', position: 'relative', width: '60px', height: '60px', flexShrink: 0 }}>
+          <img 
+            src={getCharacterImage()} 
+            alt="작업자 3D 캐릭터" 
+            style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.1))' }} 
+          />
+          <button 
+            onClick={toggleGender} 
+            style={{ position: 'absolute', bottom: '-5px', right: '-5px', background: '#475569', color: 'white', border: 'none', borderRadius: '50%', width: '24px', height: '24px', fontSize: '12px', cursor: 'pointer', zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            🔄
+          </button>
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', alignItems: 'center' }}>
