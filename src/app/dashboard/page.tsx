@@ -11,7 +11,7 @@ import localforage from 'localforage';
 import { useTheme } from '@/context/ThemeContext';
 import exifr from 'exifr'; 
 
-const ALLOWED_WORKERS = ['전현진', '김관희', '김용', '박상원', '박용화', '박현지', '안주형', '윤성우', '임동균', '김명현'];
+const ALLOWED_WORKERS = ['전소정', '김철수', '이영희', '박지민', '최동훈', '정유진', '강민재', '조수빈', '윤건우', '홍길동', '관리자'];
 
 function DashboardContent() {
   const searchParams = useSearchParams();
@@ -50,6 +50,10 @@ function DashboardContent() {
     { name: '정리정돈 상태', result: '', action: '', note: '' },
   ]);
   const editFormRef = useRef(editForm);
+
+  // ★ 특이사항 란 추가
+  const [overallRemark, setOverallRemark] = useState('');
+  const overallRemarkRef = useRef(overallRemark);
   
   const [activeReports, setActiveReports] = useState<any[]>([]);
   const [trashedReports, setTrashedReports] = useState<any[]>([]);
@@ -75,14 +79,19 @@ function DashboardContent() {
   const todayDate = new Date();
   const todayStr = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`;
 
-  const buildMarkdownFromForm = (originalMd: string, currentForm: any[]) => {
-    const parts = originalMd.split('#### ■ 안전점검 항목');
-    if (parts.length < 2) return originalMd;
-    const topPart = parts[0];
-    const bottomPart = `#### ■ 안전점검 항목\n| 점검항목 | 결과(양호/불량) | 조치사항 | 비고 |\n|---|---|---|---|\n` + 
-      currentForm.map(item => `| ${item.name} | ${item.result || '( )'} | ${item.action || '( )'} | ${item.note || '( )'} |`).join('\n');
-    return topPart + bottomPart;
+  const buildMarkdownFromForm = (originalMd: string, currentForm: any[], remark: string) => {
+    let baseTopPart = originalMd.split('#### ■ 2. 점검 항목 및 결과')[0];
+    if (!baseTopPart || baseTopPart === originalMd) {
+      baseTopPart = originalMd.split('#### ■ 안전점검 항목')[0];
+    }
+    const bottomPart = `#### ■ 2. 점검 항목 및 결과\n| 점검항목 | 결과(양호/불량) | 조치사항 | 비고 |\n|---|---|---|---|\n` + 
+      currentForm.map(item => `| ${item.name} | ${item.result || '( )'} | ${item.action || '( )'} | ${item.note || '( )'} |`).join('\n') + 
+      `\n\n#### ■ 3. 종합 특이사항\n| 내용 |\n|---|\n| ${remark || '( )'} |`;
+    return baseTopPart + bottomPart;
   };
+
+  useEffect(() => { overallRemarkRef.current = overallRemark; }, [overallRemark]);
+  useEffect(() => { editFormRef.current = editForm; }, [editForm]);
 
   useEffect(() => {
     let current = queryWorker || workerName;
@@ -90,13 +99,11 @@ function DashboardContent() {
       setWorkerName(queryWorker);
       current = queryWorker;
     }
-
     if (!ALLOWED_WORKERS.includes(current)) {
       alert('접근 권한이 없습니다.'); 
       router.push('/'); 
       return;
     }
-
     const savedGender = localStorage.getItem(`kt_gender_${current}`);
     if (savedGender === 'F') setGender('F');
 
@@ -116,13 +123,11 @@ function DashboardContent() {
     return () => { if (interval) clearInterval(interval); };
   }, [analyzing, dbTips]);
 
-  useEffect(() => { editFormRef.current = editForm; }, [editForm]);
-
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isEditing && currentReportId && report) {
       interval = setInterval(() => {
-        const currentDraft = buildMarkdownFromForm(report, editFormRef.current);
+        const currentDraft = buildMarkdownFromForm(report, editFormRef.current, overallRemarkRef.current);
         localStorage.setItem(`kt_autosave_${currentReportId}`, currentDraft);
         const now = new Date();
         const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
@@ -166,7 +171,6 @@ function DashboardContent() {
         setIsDataLoaded(true);
       }
     };
-
     loadData();
     const timer = setTimeout(() => setIsDataLoaded(true), 3000);
     return () => clearTimeout(timer);
@@ -177,7 +181,6 @@ function DashboardContent() {
     try {
       const now = new Date().toISOString();
       await supabase.from('inspections').update({ deleted_at: now }).eq('id', id);
-      
       const itemToMove = activeReports.find(r => r.id === id);
       if (itemToMove) {
         setActiveReports(prev => prev.filter(r => r.id !== id));
@@ -193,7 +196,6 @@ function DashboardContent() {
     if (!window.confirm('이 보고서를 다시 정상 기록으로 복구하시겠습니까?')) return;
     try {
       await supabase.from('inspections').update({ deleted_at: null }).eq('id', id);
-      
       const itemToMove = trashedReports.find(r => r.id === id);
       if (itemToMove) {
         setTrashedReports(prev => prev.filter(r => r.id !== id));
@@ -217,6 +219,13 @@ function DashboardContent() {
       }
     });
     setEditForm(newForm);
+
+    const remarkMatch = mdText.match(/#### ■ 3\. 종합 특이사항[\s\S]*?\|---?\|[\s\S]*?\|\s*(.*?)\s*\|/);
+    if (remarkMatch) {
+      setOverallRemark(remarkMatch[1].trim() === '( )' ? '' : remarkMatch[1].trim());
+    } else {
+      setOverallRemark('');
+    }
   };
 
   const handleFormChange = (index: number, field: string, value: string) => {
@@ -231,8 +240,10 @@ function DashboardContent() {
   const handleUpdateReport = async () => {
     setIsEditing(false); 
     if (currentReportId && report) {
-      await supabase.from('inspections').update({ ai_report_text: report }).eq('id', currentReportId);
-      setActiveReports(prev => prev.map(item => item.id === currentReportId ? { ...item, ai_report_text: report } : item));
+      const finalDraft = buildMarkdownFromForm(report, editFormRef.current, overallRemarkRef.current);
+      await supabase.from('inspections').update({ ai_report_text: finalDraft }).eq('id', currentReportId);
+      setActiveReports(prev => prev.map(item => item.id === currentReportId ? { ...item, ai_report_text: finalDraft } : item));
+      setReport(finalDraft);
       localStorage.removeItem(`kt_autosave_${currentReportId}`);
       setLastSavedTime(null);
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 }, colors: ['#26ccff', '#a25afd', '#ff5e7e', '#88ff5a', '#fcff42', '#ffa62d', '#ff36ff'] });
@@ -263,9 +274,9 @@ function DashboardContent() {
       margin: 10,
       filename: `현장점검기록_${dateString}_${timeString}_${workerName}.pdf`,
       image: { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: isDarkMode ? '#1e293b' : '#ffffff' },
+      html2canvas: { scale: 1.5, useCORS: true, backgroundColor: '#ffffff' }, // 용량 및 크기 압축
       jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
-      pagebreak: { mode: 'css' }
+      pagebreak: { mode: ['css', 'avoid'] } // 한 페이지 유지
     };
     html2pdf().set(opt).from(element).save();
   };
@@ -296,12 +307,12 @@ function DashboardContent() {
 
       const html2pdf = (await import('html2pdf.js')).default;
       const opt = {
-        margin: 15, 
+        margin: 10, 
         filename: `현장점검기록_${dateString}_${timeString}_${workerName}.pdf`,
         image: { type: 'jpeg' as const, quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+        html2canvas: { scale: 1.5, useCORS: true, backgroundColor: '#ffffff' },
         jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
-        pagebreak: { mode: ['css', 'legacy'] } 
+        pagebreak: { mode: ['css', 'avoid'] } 
       };
 
       html2pdf().set(opt).from(element).save().then(() => {
@@ -411,10 +422,7 @@ function DashboardContent() {
       for (const f of files) {
         const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${f.name ? f.name.split('.').pop() : 'png'}`;
         const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, f);
-        
-        if (uploadError) {
-          throw new Error('스토리지 사진 저장 실패');
-        }
+        if (uploadError) throw new Error('스토리지 사진 저장 실패');
         
         const { data } = supabase.storage.from('inspections').getPublicUrl(fileName);
         if (data?.publicUrl) {
@@ -424,10 +432,10 @@ function DashboardContent() {
       
       const imageUrlsString = uploadedUrls.join(',');
 
-      const rawDate = new Date(files[0].lastModified); 
+      // ★ 안전한 날짜 추출 (NaN 방지)
+      const rawDate = files[0]?.lastModified ? new Date(files[0].lastModified) : new Date();
       const photoDateStr = `${rawDate.getFullYear()}년 ${rawDate.getMonth() + 1}월 ${rawDate.getDate()}일`;
       
-      // ★ 카카오 API를 활용한 완벽한 한글 주소 추출 로직
       let finalLocationData = '위치 정보 없음';
       try {
         for (const f of files) {
@@ -435,33 +443,28 @@ function DashboardContent() {
           if (loc) {
             const lat = loc.latitude;
             const lng = loc.longitude;
-            
-            // 환경 변수에서 카카오 REST API 키 불러오기
             const kakaoKey = process.env.NEXT_PUBLIC_KAKAO_REST_API_KEY;
             
             if (kakaoKey) {
-              // 카카오 API 호출: x 파라미터에 경도, y 파라미터에 위도 배치
               const kakaoRes = await fetch(`https://dapi.kakao.com/v2/local/geo/coord2address.json?x=${lng}&y=${lat}`, {
                 headers: { Authorization: `KakaoAK ${kakaoKey}` }
               });
-              
               if (kakaoRes.ok) {
                 const kakaoData = await kakaoRes.json();
                 if (kakaoData.documents && kakaoData.documents.length > 0) {
                   const doc = kakaoData.documents[0];
-                  // 도로명 주소(road_address)가 있으면 최우선 적용, 없으면 지번 주소(address) 적용
                   const addressName = doc.road_address?.address_name || doc.address?.address_name;
                   finalLocationData = addressName || `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
                 } else {
                   finalLocationData = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
                 }
               } else {
-                finalLocationData = `${lat.toFixed(6)}, ${lng.toFixed(6)}`; // API 실패 시 좌표 폴백
+                finalLocationData = `${lat.toFixed(6)}, ${lng.toFixed(6)}`; 
               }
             } else {
-              finalLocationData = `${lat.toFixed(6)}, ${lng.toFixed(6)}`; // 키 미설정 시 좌표 폴백
+              finalLocationData = `${lat.toFixed(6)}, ${lng.toFixed(6)}`; 
             }
-            break; // 여러 장의 사진 중 첫 번째 사진에서 주소를 성공적으로 뽑으면 반복문 종료
+            break; 
           }
         }
       } catch (err) {
@@ -519,13 +522,14 @@ function DashboardContent() {
     }
   };
 
+  // ★ 결재용 보고서 양식: 흑백, 실선 보더, 타이트한 폰트 사이즈 적용
   const mdComps = {
-    table: (props: any) => <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px', border: `1px solid ${theme.border}` }} {...props} /></div>,
-    th: (props: any) => <th style={{ border: `1px solid ${theme.border}`, background: theme.mdTableHead, padding: '10px', textAlign: 'center', fontSize: '13px', color: theme.textMain }} {...props} />,
-    td: (props: any) => <td style={{ border: `1px solid ${theme.border}`, padding: '10px', fontSize: '13px', textAlign: 'center', color: theme.textMain }} {...props} />,
-    h3: (props: any) => <h3 style={{ fontSize: '18px', color: theme.textMain, marginTop: '20px', textAlign: 'center' }} {...props} />,
-    h4: (props: any) => <div style={{ textAlign: 'center', fontSize: '16px', fontWeight: 'bold', margin: '20px 0 10px 0', color: theme.textMain }} {...props} />,
-    ul: (props: any) => <ul style={{ paddingLeft: '20px', margin: '8px 0', color: theme.textMain }} {...props} />,
+    table: (props: any) => <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '12px', border: `2px solid #000`, fontSize: '11px', color: '#000' }} {...props} />,
+    th: (props: any) => <th style={{ border: `1px solid #000`, background: '#f0f0f0', padding: '6px', textAlign: 'center', color: '#000', fontWeight: 'bold' }} {...props} />,
+    td: (props: any) => <td style={{ border: `1px solid #000`, padding: '6px', textAlign: 'center', color: '#000' }} {...props} />,
+    h3: (props: any) => <h3 style={{ fontSize: '18px', color: '#000', margin: '0 0 16px 0', textAlign: 'center', fontWeight: 'bold', borderBottom: '2px solid #000', paddingBottom: '8px' }} {...props} />,
+    h4: (props: any) => <div style={{ textAlign: 'left', fontSize: '13px', fontWeight: 'bold', margin: '12px 0 6px 0', color: '#000' }} {...props} />,
+    ul: (props: any) => <ul style={{ paddingLeft: '20px', margin: '4px 0', color: '#000', fontSize: '11px' }} {...props} />,
   };
 
   if (!isDataLoaded) {
@@ -546,7 +550,7 @@ function DashboardContent() {
           body, html { background-color: #fff !important; color: #000 !important; margin: 0; padding: 0; }
           body * { visibility: hidden; } 
           .print-area, .print-area * { visibility: visible; color: #000 !important; } 
-          .print-area { position: absolute; left: 0; top: 0; width: 100%; } 
+          .print-area { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none; border: none; } 
           .no-print { display: none !important; } 
         }
       `}} />
@@ -555,7 +559,6 @@ function DashboardContent() {
         <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ width: '60px', height: '60px', border: '5px solid rgba(255,255,255,0.2)', borderTop: '5px solid #10b981', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '24px' }} />
           <h3 style={{ color: 'white', fontSize: '18px', fontWeight: 'bold' }}>문서를 준비하고 있습니다...</h3>
-          <p style={{ color: '#94a3b8', fontSize: '13px', marginTop: '10px' }}>(현장 사진 고화질 로딩 대기중)</p>
         </div>
       )}
 
@@ -573,12 +576,6 @@ function DashboardContent() {
         </div>
       )}
 
-      {showLevelUpModal && (
-        <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.8)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: theme.cardBg, padding: '40px', borderRadius: '0', textAlign: 'center', border: `1px solid ${theme.border}` }}><div style={{ fontSize: '60px' }}>🎉</div><h2 style={{ color: '#2563eb' }}>레벨 업! Lv.{level}</h2><button onClick={() => setShowLevelUpModal(false)} style={{ padding: '14px', background: '#2563eb', color: 'white', borderRadius: '0', border: 'none', width: '100%' }}>확인</button></div>
-        </div>
-      )}
-
       {analyzing && (
         <div className="no-print" style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
           <div style={{ width: '60px', height: '60px', border: '5px solid rgba(255,255,255,0.2)', borderTop: '5px solid #3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '24px' }} /><h3 style={{ color: '#60a5fa', fontSize: '15px', marginBottom: '16px', fontWeight: 'bold' }}>Vision AI 분석 중...</h3><div style={{ height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><p key={loadingTip} style={{ color: 'white', fontSize: '20px', fontWeight: 'bold', textAlign: 'center', animation: 'fadeInOut 1.5s ease-in-out forwards', margin: 0 }}>"{loadingTip}"</p></div>
@@ -587,26 +584,12 @@ function DashboardContent() {
 
       <div className="no-print" style={{ padding: '16px', borderRadius: '0', background: theme.cardBg, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px', border: `1px solid ${theme.border}` }}>
         <div style={{ padding: '4px', background: 'transparent', position: 'relative', width: '90px', height: '90px', flexShrink: 0 }}>
-          <img 
-            src={getCharacterImage()} 
-            alt="작업자 3D 캐릭터" 
-            style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.1))', transform: 'scale(1.25)' }} 
-          />
-          <button 
-            onClick={toggleGender} 
-            style={{ position: 'absolute', bottom: '0px', right: '0px', background: '#475569', color: 'white', border: 'none', borderRadius: '50%', width: '28px', height: '28px', fontSize: '14px', cursor: 'pointer', zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.2)' }}
-          >
-            🔄
-          </button>
+          <img src={getCharacterImage()} alt="작업자 3D 캐릭터" style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.1))', transform: 'scale(1.25)' }} />
+          <button onClick={toggleGender} style={{ position: 'absolute', bottom: '0px', right: '0px', background: '#475569', color: 'white', border: 'none', borderRadius: '50%', width: '28px', height: '28px', fontSize: '14px', cursor: 'pointer', zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.2)' }}>🔄</button>
         </div>
         <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', alignItems: 'center' }}>
-            <h2 style={{ margin: 0, fontSize: '16px', color: theme.textMain }}>{workerName}</h2><span style={{ fontSize: '11px', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '0' }}>경기서부설계팀</span>
-          </div>
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <span style={{ color: '#2563eb', fontWeight: 'bold' }}>Lv.{level}</span>
-            <div style={{ flex: 1, height: '10px', background: theme.btnCancel, borderRadius: '0' }}><div style={{ width: `${Math.min(exp % 100, 100)}%`, height: '100%', background: '#3b82f6' }} /></div>
-          </div>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', alignItems: 'center' }}><h2 style={{ margin: 0, fontSize: '16px', color: theme.textMain }}>{workerName}</h2><span style={{ fontSize: '11px', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '0' }}>경기설계팀</span></div>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}><span style={{ color: '#2563eb', fontWeight: 'bold' }}>Lv.{level}</span><div style={{ flex: 1, height: '10px', background: theme.btnCancel, borderRadius: '0' }}><div style={{ width: `${Math.min(exp % 100, 100)}%`, height: '100%', background: '#3b82f6' }} /></div></div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <button onClick={toggleTheme} style={{ padding: '6px 8px', background: theme.btnCancel, color: theme.textMain, borderRadius: '0', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{isDarkMode ? '☀️ 밝게' : '🌙 어둡게'}</button>
@@ -619,29 +602,14 @@ function DashboardContent() {
 
       <div className="no-print" style={{ background: theme.cardBg, padding: '20px', borderRadius: '0', border: `1px solid ${theme.border}`, marginBottom: '16px' }}>
         <h3 style={{ margin: '0 0 16px 0', fontSize: '15px', color: theme.textMain }}>📝 사전 정보 입력</h3>
-        <div style={{ marginBottom: '12px' }}>
-          <label style={{ display: 'block', fontSize: '13px', color: theme.textSub, marginBottom: '6px', fontWeight: 'bold' }}>공사번호</label>
-          <input type="text" value={projectNumberInput} onChange={e => setProjectNumberInput(e.target.value)} placeholder="예: 안산-설비-2026-0096" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
-        </div>
-        <div style={{ marginBottom: '12px' }}>
-          <label style={{ display: 'block', fontSize: '13px', color: theme.textSub, marginBottom: '6px', fontWeight: 'bold' }}>작업공정</label>
-          <input type="text" value={workTypeInput} onChange={e => setWorkTypeInput(e.target.value)} placeholder="예: 초고속 통신망 설비 점검" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
-        </div>
-        <div style={{ marginBottom: '4px' }}>
-          <label style={{ display: 'block', fontSize: '13px', color: theme.textSub, marginBottom: '6px', fontWeight: 'bold' }}>작업내용</label>
-          <input type="text" value={workDescInput} onChange={e => setWorkDescInput(e.target.value)} placeholder="예: 현장 안전 수칙 준수 및 자재 적재 상태 확인" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
-        </div>
+        <div style={{ marginBottom: '12px' }}><label style={{ display: 'block', fontSize: '13px', color: theme.textSub, marginBottom: '6px', fontWeight: 'bold' }}>공사번호</label><input type="text" value={projectNumberInput} onChange={e => setProjectNumberInput(e.target.value)} placeholder="예: 안산-설비-2026-0096" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} /></div>
+        <div style={{ marginBottom: '12px' }}><label style={{ display: 'block', fontSize: '13px', color: theme.textSub, marginBottom: '6px', fontWeight: 'bold' }}>작업공정</label><input type="text" value={workTypeInput} onChange={e => setWorkTypeInput(e.target.value)} placeholder="예: 초고속 통신망 설비 점검" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} /></div>
+        <div style={{ marginBottom: '4px' }}><label style={{ display: 'block', fontSize: '13px', color: theme.textSub, marginBottom: '6px', fontWeight: 'bold' }}>작업내용</label><input type="text" value={workDescInput} onChange={e => setWorkDescInput(e.target.value)} placeholder="예: 현장 안전 수칙 준수 및 자재 적재 상태 확인" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} /></div>
       </div>
 
       <div className="no-print" style={{ marginBottom: '16px' }}>
-        <label style={{ display: 'block', textAlign: 'center', padding: '30px', background: theme.cardBg, border: `2px dashed ${theme.border}`, borderRadius: '0', cursor: 'pointer' }}>
-          <div style={{ fontSize: '32px' }}>📸 사진 추가</div><input type="file" accept="image/*" multiple onChange={handleFileChange} style={{ display: 'none' }} />
-        </label>
-        {previewUrls.length > 0 && (
-          <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '10px 0' }}>
-            {previewUrls.map((url, i) => (<div key={i} style={{ position: 'relative' }}><img src={url} alt="미리보기" style={{ width: '80px', height: '80px', borderRadius: '0', objectFit: 'cover' }} /><button onClick={() => removeFile(i)} style={{ position: 'absolute', top: 0, right: 0, background: 'black', color: 'white', border: 'none' }}>X</button></div>))}
-          </div>
-        )}
+        <label style={{ display: 'block', textAlign: 'center', padding: '30px', background: theme.cardBg, border: `2px dashed ${theme.border}`, borderRadius: '0', cursor: 'pointer' }}><div style={{ fontSize: '32px' }}>📸 사진 추가</div><input type="file" accept="image/*" multiple onChange={handleFileChange} style={{ display: 'none' }} /></label>
+        {previewUrls.length > 0 && (<div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '10px 0' }}>{previewUrls.map((url, i) => (<div key={i} style={{ position: 'relative' }}><img src={url} alt="미리보기" style={{ width: '80px', height: '80px', borderRadius: '0', objectFit: 'cover' }} /><button onClick={() => removeFile(i)} style={{ position: 'absolute', top: 0, right: 0, background: 'black', color: 'white', border: 'none' }}>X</button></div>))}</div>)}
       </div>
 
       <button className="no-print" onClick={handleUploadAndAnalyze} disabled={analyzing || files.length === 0} style={{ width: '100%', padding: '16px', background: files.length ? '#2563eb' : theme.btnCancel, color: files.length ? 'white' : theme.textSub, border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>일괄 분석하기</button>
@@ -668,6 +636,17 @@ function DashboardContent() {
                     </div>
                   ))}
                 </div>
+                
+                {/* ★ 추가된 종합 특이사항 텍스트 에디터 */}
+                <div style={{ background: '#334155', padding: '10px', borderRadius: '0', marginTop: '10px' }}>
+                  <div style={{ color: 'white', fontSize: '13px', fontWeight: 'bold', marginBottom: '8px' }}>📝 종합 특이사항 (선택사항)</div>
+                  <textarea
+                    value={overallRemark}
+                    onChange={e => setOverallRemark(e.target.value)}
+                    placeholder="특이사항 및 비고를 자유롭게 입력하세요..."
+                    style={{ width: '100%', height: '80px', padding: '8px', borderRadius: '0', border: 'none', outline: 'none', backgroundColor: '#f1f5f9', color: '#0f172a', boxSizing: 'border-box', resize: 'vertical' }}
+                  />
+                </div>
               </div>
 
               <div style={{ display: 'flex', gap: '10px' }}>
@@ -678,22 +657,27 @@ function DashboardContent() {
           ) : (
             <>
               <div ref={reportRef}>
-                <h2 className="print-only" style={{ textAlign: 'center', fontSize: '24px', borderBottom: `2px solid #000`, paddingBottom: '16px', marginBottom: '24px', color: '#000' }}>
-                  {todayStr} {workerName} 안전점검 보고서
+                <h2 className="print-only" style={{ textAlign: 'center', fontSize: '22px', borderBottom: `2px solid #000`, paddingBottom: '12px', marginBottom: '16px', color: '#000', fontWeight: 'bold' }}>
+                  {todayStr} 현장 안전점검 결과보고서
                 </h2>
                 <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
+                
+                {/* ★ 출력 시 이미지가 무조건 한 페이지에 들어가도록 사이즈 및 높이 엄격 제어 */}
                 {previewUrls.length > 0 && (
-                  <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '20px 0 10px 0', color: theme.textMain }}>📸 현장 사진 (첨부)</h4>
-                    {previewUrls.map((url, i) => (<img key={i} src={url} alt="첨부사진" className="avoid-break" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '0', border: `1px solid ${theme.border}` }} />))}
+                  <div style={{ marginTop: '10px', pageBreakInside: 'avoid' }}>
+                    <h4 style={{ width: '100%', borderBottom: `2px solid #000`, paddingBottom: '4px', margin: '12px 0 8px 0', color: '#000', fontSize: '13px', fontWeight: 'bold' }}>■ 4. 현장 첨부 사진</h4>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                      {previewUrls.map((url, i) => (
+                        <img key={i} src={url} alt="첨부사진" style={{ width: '31%', height: '150px', objectFit: 'cover', border: `1px solid #000`, borderRadius: '0' }} />
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
               
               <div className="no-print" style={{ display: 'flex', gap: '10px', marginTop: '20px', flexWrap: 'wrap' }}>
-                <button onClick={handleStartEdit} style={{ flex: 1, minWidth: '100px', padding: '12px', cursor: 'pointer', borderRadius: '0', border: `1px solid ${theme.border}`, background: theme.btnCancel, color: theme.textMain, fontWeight: 'bold' }}>수정</button>
-                <button onClick={() => window.print()} style={{ flex: 1, minWidth: '100px', padding: '12px', background: '#10b981', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>흰 바탕 인쇄</button>
-                <button onClick={handleCapturePDF} style={{ flex: 1, minWidth: '120px', padding: '12px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>다크모드 원본 캡처</button>
+                <button onClick={handleStartEdit} style={{ flex: 1, minWidth: '100px', padding: '12px', cursor: 'pointer', borderRadius: '0', border: `1px solid ${theme.border}`, background: theme.btnCancel, color: theme.textMain, fontWeight: 'bold' }}>내용 수정/추가</button>
+                <button onClick={handleCapturePDF} style={{ flex: 1, minWidth: '120px', padding: '12px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>보고서 PDF 다운로드</button>
               </div>
             </>
           )}
@@ -703,20 +687,14 @@ function DashboardContent() {
       {/* 과거 기록 영역 */}
       <div className="no-print" style={{ marginTop: '30px' }}>
         <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
-          <button onClick={() => { setShowPast(!showPast); setShowTrash(false); }} style={{ flex: 1, padding: '16px', background: showPast && !showTrash ? '#2563eb' : theme.cardBg, border: `1px solid ${theme.border}`, color: showPast && !showTrash ? 'white' : theme.textMain, borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>
-            과거 기록 보기 ({activeReports.length}건)
-          </button>
-          <button onClick={() => { setShowPast(true); setShowTrash(true); }} style={{ width: '120px', padding: '16px', background: showTrash ? '#ef4444' : theme.cardBg, border: `1px solid ${theme.border}`, color: showTrash ? 'white' : theme.textMain, borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>
-            🗑️ 휴지통 ({trashedReports.length})
-          </button>
+          <button onClick={() => { setShowPast(!showPast); setShowTrash(false); }} style={{ flex: 1, padding: '16px', background: showPast && !showTrash ? '#2563eb' : theme.cardBg, border: `1px solid ${theme.border}`, color: showPast && !showTrash ? 'white' : theme.textMain, borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>과거 기록 보기 ({activeReports.length}건)</button>
+          <button onClick={() => { setShowPast(true); setShowTrash(true); }} style={{ width: '120px', padding: '16px', background: showTrash ? '#ef4444' : theme.cardBg, border: `1px solid ${theme.border}`, color: showTrash ? 'white' : theme.textMain, borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>🗑️ 휴지통 ({trashedReports.length})</button>
         </div>
 
         {showPast && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {displayReports.length === 0 && (
-              <div style={{ padding: '30px', textAlign: 'center', color: theme.textSub }}>{showTrash ? '휴지통이 비어있습니다.' : '저장된 과거 기록이 없습니다.'}</div>
-            )}
-            {displayReports.map((item, i) => {
+            {displayReports.length === 0 && (<div style={{ padding: '30px', textAlign: 'center', color: theme.textSub }}>데이터가 없습니다.</div>)}
+            {displayReports.map((item) => {
               const isExpanded = expandedReportId === item.id;
               const hasDanger = item.ai_report_text?.includes('불량');
               const savedUrls = item.image_url ? item.image_url.split(',').filter(Boolean) : [];
@@ -725,10 +703,7 @@ function DashboardContent() {
               return (
                 <div key={item.id} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '0', overflow: 'hidden' }}>
                   <div onClick={() => setExpandedReportId(isExpanded ? null : item.id)} style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', background: isExpanded ? theme.mdTableHead : 'transparent' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <strong style={{ color: theme.textMain, fontSize: '15px' }}>{reportDate} 점검</strong>
-                      <span style={{ padding: '4px 8px', fontSize: '11px', background: hasDanger ? '#ef4444' : '#10b981', color: 'white', borderRadius: '4px', fontWeight: 'bold' }}>{hasDanger ? '⚠️ 위험요소 검출' : '✅ 전체 양호'}</span>
-                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><strong style={{ color: theme.textMain, fontSize: '15px' }}>{reportDate} 점검</strong><span style={{ padding: '4px 8px', fontSize: '11px', background: hasDanger ? '#ef4444' : '#10b981', color: 'white', borderRadius: '4px', fontWeight: 'bold' }}>{hasDanger ? '⚠️ 위험요소 검출' : '✅ 전체 양호'}</span></div>
                     <span style={{ color: theme.textSub, fontSize: '13px', fontWeight: 'bold' }}>{isExpanded ? '▲ 접기' : '▼ 펼치기'}</span>
                   </div>
 
@@ -738,18 +713,16 @@ function DashboardContent() {
                       {savedUrls.length > 0 && (
                         <div style={{ marginTop: '20px' }}>
                           <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '0 0 16px 0', color: theme.textMain }}>📸 첨부된 현장 사진</h4>
-                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>{savedUrls.map((u: string, idx: number) => (<img key={idx} src={u} alt="사진" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '0', border: `1px solid ${theme.border}` }} />))}</div>
+                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>{savedUrls.map((u: string, idx: number) => (<img key={idx} src={u} alt="사진" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', border: `1px solid ${theme.border}` }} />))}</div>
                         </div>
                       )}
-                      
                       <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
                         {showTrash ? (
-                          <button onClick={() => handleRestore(item.id)} style={{ flex: 1, padding: '14px', background: '#10b981', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>♻️ 정상 기록으로 복구</button>
+                          <button onClick={() => handleRestore(item.id)} style={{ flex: 1, padding: '14px', background: '#10b981', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>♻️ 복구</button>
                         ) : (
                           <>
-                            <button onClick={() => handlePrintPastReport(item)} style={{ flex: 1, padding: '14px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>인쇄</button>
-                            <button onClick={() => handleDownloadPastPDF(item)} style={{ flex: 1, padding: '14px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>PDF 다운로드</button>
-                            <button onClick={() => handleSoftDelete(item.id)} style={{ flex: 0.5, padding: '14px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>삭제</button>
+                            <button onClick={() => handleDownloadPastPDF(item)} style={{ flex: 1, padding: '14px', background: '#8b5cf6', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>PDF 다운로드</button>
+                            <button onClick={() => handleSoftDelete(item.id)} style={{ flex: 0.5, padding: '14px', background: '#ef4444', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>삭제</button>
                           </>
                         )}
                       </div>
@@ -765,19 +738,18 @@ function DashboardContent() {
       {printItem && (() => {
         const pastDate = new Date(printItem.created_at);
         const pastDateStr = `${pastDate.getFullYear()}-${String(pastDate.getMonth() + 1).padStart(2, '0')}-${String(pastDate.getDate()).padStart(2, '0')}`;
-        
         return (
           <div className="print-area print-only" style={{ background: 'white', color: 'black', width: '100%' }}>
-            <div id="past-report-pdf" style={{ padding: '40px', background: 'white', color: 'black', width: '100%', maxWidth: '800px', margin: '0 auto', boxSizing: 'border-box' }}>
-              <h2 style={{ textAlign: 'center', fontSize: '24px', borderBottom: '2px solid black', paddingBottom: '16px', marginBottom: '24px', color: 'black' }}>
-                {pastDateStr} {workerName} 안전점검 보고서
+            <div id="past-report-pdf" style={{ padding: '20px', background: 'white', color: 'black', width: '100%', maxWidth: '800px', margin: '0 auto', boxSizing: 'border-box' }}>
+              <h2 style={{ textAlign: 'center', fontSize: '22px', borderBottom: '2px solid black', paddingBottom: '12px', marginBottom: '16px', color: 'black', fontWeight: 'bold' }}>
+                {pastDateStr} 현장 안전점검 결과보고서
               </h2>
               <div style={{ color: 'black' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown></div>
               {printItem.image_url && (
-                <div style={{ marginTop: '30px', pageBreakInside: 'avoid' }}>
-                  <h4 style={{ width: '100%', borderBottom: `2px solid black`, paddingBottom: '8px', margin: '20px 0 15px 0', color: 'black', fontSize: '18px' }}>📸 현장 사진 (첨부)</h4>
-                  <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
-                    {printItem.image_url.split(',').filter(Boolean).map((u: string, i: number) => (<img key={i} src={u} crossOrigin="anonymous" className="avoid-break" style={{ width: '47%', height: '300px', objectFit: 'cover', border: `1px solid #ccc` }} alt="첨부사진" />))}
+                <div style={{ marginTop: '10px', pageBreakInside: 'avoid' }}>
+                  <h4 style={{ width: '100%', borderBottom: `2px solid black`, paddingBottom: '4px', margin: '12px 0 8px 0', color: 'black', fontSize: '13px', fontWeight: 'bold' }}>■ 4. 현장 첨부 사진</h4>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                    {printItem.image_url.split(',').filter(Boolean).map((u: string, i: number) => (<img key={i} src={u} crossOrigin="anonymous" style={{ width: '31%', height: '150px', objectFit: 'cover', border: `1px solid #000` }} alt="첨부사진" />))}
                   </div>
                 </div>
               )}
