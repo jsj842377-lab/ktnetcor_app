@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTheme } from '@/context/ThemeContext';
+import { supabase } from '@/utils/supabase'; // 모델 설정을 위해 다시 추가됨
 import * as XLSX from 'xlsx';
 
 type SafetyStatus = 'ok' | 'danger' | 'unknown';
@@ -15,19 +16,13 @@ const formatDate = (d: Date) =>
 
 const getQuarter = (d: Date) => `Q${Math.floor(d.getMonth() / 3) + 1}`;
 
-/** 엑셀 수식 인젝션 방지: =, +, -, @ 로 시작하는 값 앞에 ' 추가 */
 const safeCell = (value: string) => (/^[=+\-@]/.test(value) ? `'${value}` : value);
 
-/**
- * AI 보고서 마크다운에서 공사번호/작업공정/안전점검 결과를 추출합니다.
- * (이전 버전은 표 머리글 '결과(양호/불량)'에 '불량'이 들어 있어 모든 보고서가 X로 판정되는 문제가 있었습니다.)
- */
 const extractInfoFromMarkdown = (md: string) => {
   const mdString = md || '';
   const projNumMatch = mdString.match(/\*\*공사번호\*\*\s*\|\s*([^|]+?)\s*\|/);
   const workTypeMatch = mdString.match(/\*\*작업공정\*\*\s*\|\s*([^|]+?)\s*\|/);
 
-  // '점검 항목 및 결과' ~ '종합 특이사항' 구간의 표에서 '결과' 열(3번째 칸)만 추출
   const section = mdString.split(/점검\s*항목\s*및\s*결과/)[1]?.split(/종합\s*특이사항/)[0] ?? '';
   const results = section
     .split('\n')
@@ -53,7 +48,7 @@ const STATUS_VIEW: Record<SafetyStatus, { excel: string; label: string; color: s
   unknown: { excel: '확인필요', label: '확인필요', color: '#64748b' },
 };
 
-// ───────────────────────── 보고서 마크다운 렌더러 (외부 라이브러리 불필요) ─────────────────────────
+// ───────────────────────── 보고서 마크다운 렌더러 ─────────────────────────
 type Block =
   | { type: 'heading'; level: number; text: string }
   | { type: 'table'; rows: string[][] }
@@ -94,7 +89,6 @@ const parseMarkdown = (md: string): Block[] => {
   return blocks;
 };
 
-/** **굵게** 처리 */
 const renderInline = (text: string) =>
   text.split(/(\*\*[^*]+\*\*)/g).map((part, idx) =>
     part.startsWith('**') && part.endsWith('**') && part.length > 4
@@ -174,6 +168,7 @@ function ReportView({ markdown, theme }: { markdown: string; theme: any }) {
   );
 }
 
+// ───────────────────────── 메인 컴포넌트 ─────────────────────────
 export default function AdminPage() {
   const router = useRouter();
   const { isDarkMode } = useTheme();
@@ -189,16 +184,18 @@ export default function AdminPage() {
   const [allReports, setAllReports] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // 필터링 상태 (연도, 분기, 이름 검색)
+  // ★ AI 모델 관리 상태 복구
+  const [aiModelName, setAiModelName] = useState<string>('로딩 중...');
+  const [isModelUpdating, setIsModelUpdating] = useState<boolean>(false);
+
+  // 필터링 상태
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<string>(currentYear.toString());
   const [selectedQuarter, setSelectedQuarter] = useState<string>('ALL');
   const [searchName, setSearchName] = useState<string>('');
 
-  // 보고서 열람 팝업
   const [selectedReport, setSelectedReport] = useState<any | null>(null);
 
-  // 다크모드 대응 테마
   const theme = isDarkMode ? {
     bg: '#0f172a', cardBg: '#1e293b', textMain: '#f8fafc', textSub: '#94a3b8',
     border: '#334155', btnPrimary: '#3b82f6', inputBg: '#0f172a', thBg: '#334155'
@@ -207,7 +204,37 @@ export default function AdminPage() {
     border: '#cbd5e1', btnPrimary: '#2563eb', inputBg: '#f8fafc', thBg: '#f1f5f9'
   };
 
-  // 서버에서 해당 연도의 보고서 가져오기 (401이면 로그인 화면으로)
+  // ★ DB에서 모델 이름 불러오기 복구
+  const fetchSystemSettings = async () => {
+    try {
+      const { data } = await supabase.from('system_settings').select('setting_value').eq('setting_key', 'gemini_target_model').single();
+      if (data) setAiModelName(data.setting_value);
+      else setAiModelName('gemini-3.8-flash');
+    } catch (err) {
+      console.error('설정 로드 실패:', err);
+    }
+  };
+
+  // ★ 모델 이름 변경 적용하기 복구
+  const handleUpdateModel = async () => {
+    if (!aiModelName.trim()) return alert('모델 이름을 입력해주세요.');
+    setIsModelUpdating(true);
+    try {
+      const { error } = await supabase.from('system_settings').upsert({
+        setting_key: 'gemini_target_model',
+        setting_value: aiModelName.trim(),
+        updated_at: new Date().toISOString()
+      });
+      if (error) throw error;
+      alert(`✅ AI 모델이 [${aiModelName.trim()}]으로 즉시 변경 및 적용되었습니다.`);
+    } catch (err: any) {
+      alert(`변경 실패: ${err.message}`);
+    } finally {
+      setIsModelUpdating(false);
+    }
+  };
+
+  // 보고서 데이터 로드
   const loadReports = useCallback(async (year: string, silent = false): Promise<boolean> => {
     setIsLoading(true);
     try {
@@ -230,12 +257,13 @@ export default function AdminPage() {
     }
   }, []);
 
-  // 새로고침 시 기존 로그인 세션(쿠키) 확인
+  // 새로고침 시 세션 확인 및 설정 로드
   useEffect(() => {
-    loadReports(currentYear.toString(), true).finally(() => setAuthChecked(true));
+    loadReports(currentYear.toString(), true).then((authorized) => {
+      if (authorized) fetchSystemSettings();
+    }).finally(() => setAuthChecked(true));
   }, [loadReports, currentYear]);
 
-  // ESC 키로 보고서 팝업 닫기 + 팝업이 열린 동안 배경 스크롤 방지
   useEffect(() => {
     if (!selectedReport) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -259,7 +287,6 @@ export default function AdminPage() {
     }
   };
 
-  // 관리자 로그인 (서버에서 검증)
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
@@ -277,6 +304,7 @@ export default function AdminPage() {
       }
       setAdminPwd('');
       await loadReports(selectedYear);
+      fetchSystemSettings(); // ★ 로그인 성공 시 모델 설정 로드
     } catch {
       alert('서버와 통신하지 못했습니다. 잠시 후 다시 시도해주세요.');
     } finally {
@@ -298,7 +326,6 @@ export default function AdminPage() {
     loadReports(year);
   };
 
-  // 분기 / 이름 필터 (연도는 서버에서 이미 필터링됨)
   const filteredReports = useMemo(() => {
     const keyword = searchName.trim();
     return allReports.filter((item) => {
@@ -335,7 +362,6 @@ export default function AdminPage() {
     XLSX.writeFile(workbook, fileName);
   };
 
-  // ⏳ 세션 확인 중
   if (!authChecked) {
     return (
       <div style={{ minHeight: '100vh', background: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textSub, fontFamily: "'Pretendard', sans-serif" }}>
@@ -344,7 +370,6 @@ export default function AdminPage() {
     );
   }
 
-  // 🔒 로그인 화면
   if (!isAuthorized) {
     return (
       <div style={{ minHeight: '100vh', background: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Pretendard', sans-serif" }}>
@@ -364,7 +389,6 @@ export default function AdminPage() {
     );
   }
 
-  // 🔓 관리자 대시보드
   return (
     <div style={{ minHeight: '100vh', background: theme.bg, padding: '40px 16px', fontFamily: "'Pretendard', sans-serif" }}>
       <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
@@ -377,6 +401,28 @@ export default function AdminPage() {
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={handleLogout} style={{ padding: '10px 20px', background: 'transparent', color: theme.textSub, border: `1px solid ${theme.border}`, borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>로그아웃</button>
             <button onClick={() => router.push('/')} style={{ padding: '10px 20px', background: theme.btnPrimary, color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>메인으로 나가기</button>
+          </div>
+        </div>
+
+        {/* ★ 실시간 AI 모델 버전 관리 패널 복구 */}
+        <div style={{ background: theme.cardBg, padding: '20px', borderRadius: '8px', border: `1px solid ${theme.border}`, marginBottom: '24px' }}>
+          <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: theme.textMain }}>⚙️ 실시간 AI 모델 버전 관리</h3>
+          <p style={{ margin: '0 0 16px 0', fontSize: '13px', color: theme.textSub }}>구글 API 정책 변경 시, 소스 코드 수정 없이 즉각 대응할 수 있습니다.</p>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <input 
+              type="text" 
+              value={aiModelName} 
+              onChange={(e) => setAiModelName(e.target.value)} 
+              placeholder="예: gemini-3.8-flash" 
+              style={{ flex: 1, minWidth: '200px', padding: '12px', borderRadius: '4px', border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.textMain, fontWeight: 'bold' }} 
+            />
+            <button 
+              onClick={handleUpdateModel} 
+              disabled={isModelUpdating} 
+              style={{ padding: '12px 24px', background: '#f59e0b', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+            >
+              {isModelUpdating ? '저장 중...' : '저장 및 즉시 적용'}
+            </button>
           </div>
         </div>
 

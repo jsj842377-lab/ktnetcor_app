@@ -1,6 +1,7 @@
 // 저장 위치: src/app/api/analyze/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { createClient } from '@supabase/supabase-js';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -66,6 +67,24 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.GEMINI_API_KEY?.trim();
     if (!apiKey) throw new Error('서버에 Gemini API 키가 설정되지 않았습니다.');
 
+    // ★ DB에서 최신 타겟 모델 이름 실시간 조회 (폴백: gemini-3.8-flash)
+    let TARGET_MODEL = 'gemini-3.8-flash';
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (supabaseUrl && supabaseKey) {
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        const { data } = await supabase.from('system_settings').select('setting_value').eq('setting_key', 'gemini_target_model').single();
+        if (data?.setting_value) {
+          TARGET_MODEL = data.setting_value.trim();
+        }
+      }
+    } catch (dbErr) {
+      console.warn('DB에서 모델 이름 조회 실패, 기본 모델 사용:', dbErr);
+    }
+
+    console.log(`[디버깅] 최종 실행 모델: ${TARGET_MODEL}`);
+
     const formData = await req.formData();
     const files = formData.getAll('images').filter((f): f is File => typeof f !== 'string' && f.size > 0);
 
@@ -100,10 +119,6 @@ export async function POST(req: NextRequest) {
     const prompt = buildPrompt(info);
     const genAI = new GoogleGenerativeAI(apiKey);
     
-    // ★ 핵심 수정: 자동 모델 탐지 로직을 삭제하고 에러에서 요구한 3.8-flash 모델로 강제 고정
-    const TARGET_MODEL = 'gemini-3.8-flash';
-    console.log(`[디버깅] 실행 모델: ${TARGET_MODEL}`);
-    
     const model = genAI.getGenerativeModel({
       model: TARGET_MODEL,
       generationConfig: { temperature: 0.2 },
@@ -127,7 +142,8 @@ export async function POST(req: NextRequest) {
           await delay(Math.pow(2, retries) * 1500);
           continue;
         }
-        throw new Error(`AI 분석 실패: ${msg}`);
+        // 404 등 그 외 에러는 즉시 반환하여 프론트에서 모델 교체를 유도
+        throw new Error(`AI 분석 실패 (${TARGET_MODEL}): ${msg}`);
       }
     }
   } catch (error: any) {
