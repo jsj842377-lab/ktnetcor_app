@@ -15,9 +15,9 @@ const FALLBACK_MODEL = 'gemini-3.8-flash';
 const MODEL_CACHE_TTL = 60 * 60 * 1000; // 1시간
 const MAX_MODEL_CANDIDATES = 4; // 404일 때 순서대로 시도할 모델 수
 
-// 이미지 분석에 부적합한 모델 제외
+// ★ 수정됨: 구글에서 접근을 차단한 2.5-flash 모델을 필터링 패턴에 추가하여 처음부터 제외
 const EXCLUDED_MODEL_PATTERN =
-  /(image|tts|embedding|aqa|audio|live|imagen|veo|learnlm|gemma|robotics|computer-use|native-audio)/i;
+  /(image|tts|embedding|aqa|audio|live|imagen|veo|learnlm|gemma|robotics|computer-use|native-audio|2\.5-flash)/i;
 
 // ───────────────────────── 유틸 ─────────────────────────
 class HttpError extends Error {
@@ -60,12 +60,6 @@ function parseFlashVersion(name: string): [number, number] | null {
 
 let cachedModels: { names: string[]; expiresAt: number } | null = null;
 
-/**
- * 사용할 모델 후보를 우선순위 순으로 반환합니다.
- * 1) GEMINI_MODEL 환경변수가 있으면 그것만 사용
- * 2) 없으면 이 API 키로 사용 가능한 모델 중 가장 최신 flash 정식 버전부터
- * 3) 목록 조회에 실패하면 FALLBACK_MODEL
- */
 async function resolveModelCandidates(apiKey: string): Promise<string[]> {
   const envModel = process.env.GEMINI_MODEL?.trim();
   if (envModel) return [envModel];
@@ -73,8 +67,7 @@ async function resolveModelCandidates(apiKey: string): Promise<string[]> {
   if (cachedModels && cachedModels.expiresAt > Date.now()) return cachedModels.names;
 
   try {
-    // API 키는 헤더로 전달해 URL/로그 노출 방지
-    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', {
+    const res = await fetch('[https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000](https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000)', {
       headers: { 'x-goog-api-key': apiKey },
     });
     if (res.ok) {
@@ -84,7 +77,6 @@ async function resolveModelCandidates(apiKey: string): Promise<string[]> {
         .map((m: any) => String(m.name).replace('models/', ''))
         .filter((name: string) => name.startsWith('gemini') && !EXCLUDED_MODEL_PATTERN.test(name));
 
-      // 정식 flash 버전을 최신순으로 (3.8 > 3.5 > 2.5 ...)
       const stableFlash = candidates
         .map((name) => ({ name, version: parseFlashVersion(name) }))
         .filter((x): x is { name: string; version: [number, number] } => x.version !== null)
@@ -160,7 +152,16 @@ function buildPrompt(info: ReportInfo): string {
 
 // ───────────────────────── 에러 분류 ─────────────────────────
 function getErrorStatus(err: any): number | undefined {
-  return err?.status ?? err?.response?.status;
+  if (err?.status) return err.status;
+  if (err?.response?.status) return err.response.status;
+  
+  // ★ 수정됨: 구글 SDK가 HTTP 상태 코드를 객체 속성이 아닌 에러 '메시지 문자열' 내부에 반환하는 현상 방어
+  const msg = String(err?.message || '');
+  if (msg.includes('[404 Not Found]') || msg.includes('404')) return 404;
+  if (msg.includes('[429') || msg.includes('429')) return 429;
+  if (msg.includes('[503') || msg.includes('503')) return 503;
+  
+  return undefined;
 }
 
 function toHttpError(err: any): HttpError {
@@ -256,10 +257,7 @@ export async function POST(req: NextRequest) {
     const genAI = new GoogleGenerativeAI(apiKey);
     const modelNames = await resolveModelCandidates(apiKey);
 
-    // 모델 후보를 순서대로 시도:
-    //  - 404(모델 사용 불가) → 다음 후보 모델로
-    //  - 503 / 일시적 429 → 같은 모델로 재시도
-    //  - 그 외 오류 → 즉시 중단
+    // 모델 후보를 순서대로 시도
     let lastError: unknown;
 
     modelLoop: for (const modelName of modelNames) {
@@ -280,9 +278,10 @@ export async function POST(req: NextRequest) {
         } catch (err: any) {
           lastError = err;
 
+          // ★ 수정됨: 여기서 캐치된 상태코드를 정확하게 파악하고 다음 후보로 전환합니다.
           if (getErrorStatus(err) === 404) {
             console.warn(`모델 사용 불가(404): ${modelName} → 다음 후보로 전환`);
-            cachedModels = null; // 다음 요청에서 목록 다시 조회
+            cachedModels = null; 
             continue modelLoop;
           }
 
@@ -291,7 +290,7 @@ export async function POST(req: NextRequest) {
           const retryable = (httpErr.status === 503 || httpErr.status === 429) && !isDailyQuota;
 
           if (!retryable || attempt === MAX_ATTEMPTS) break modelLoop;
-          await delay(Math.pow(2, attempt) * 1500); // 3초, 6초
+          await delay(Math.pow(2, attempt) * 1500);
         }
       }
     }
