@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
     const genAI = new GoogleGenerativeAI(apiKey);
     
     // ★ 핵심 수정: 자동 모델 탐지 로직을 삭제하고 에러에서 요구한 3.8-flash 모델로 강제 고정
-    const TARGET_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+    const TARGET_MODEL = 'gemini-3.8-flash';
     console.log(`[디버깅] 실행 모델: ${TARGET_MODEL}`);
     
     const model = genAI.getGenerativeModel({
