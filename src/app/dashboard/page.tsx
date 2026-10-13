@@ -495,29 +495,11 @@ function DashboardContent() {
 
     setAnalyzing(true); setReport(null); setIsEditing(false);
     try {
-      // 1) 촬영일 / 위치
-      const photoDate = await getPhotoDate(photoFiles[0]);
-      const photoDateStr = `${photoDate.getFullYear()}년 ${photoDate.getMonth() + 1}월 ${photoDate.getDate()}일`;
-      const finalLocationData = await getLocationText(photoFiles);
+      const t0 = Date.now();
 
-      // 2) AI 분석 (먼저 분석하고, 성공했을 때만 업로드해서 쓸모없는 파일이 쌓이지 않게 함)
-      const formData = new FormData();
-      photoFiles.forEach((f) => formData.append('images', f));
-      formData.append('photoDate', photoDateStr);
-      formData.append('photoLocation', finalLocationData);
-      formData.append('projectNumber', projectNumberInput || '미입력');
-      formData.append('workType', workTypeInput || '미입력');
-      formData.append('workDesc', workDescInput || '미입력');
-      formData.append('inspector', workerName);
-
-      const res = await fetch('/api/analyze', { method: 'POST', body: formData });
-      const resData = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(resData.error || '분석 실패');
-      const reportText: string = resData.report;
-
-      // 3) 사진 업로드 (병렬)
+      // 사진 업로드를 AI 분석과 동시에 시작 (서로 기다리지 않게 해서 전체 대기 시간을 줄임)
       // Promise.all 은 입력 순서대로 결과를 돌려주므로 사진 순서(시간순)가 그대로 유지됩니다.
-      const orderedNames = await Promise.all(photoFiles.map(async (f) => {
+      const uploadPromise = Promise.all(photoFiles.map(async (f) => {
         const ext = f.name && f.name.includes('.') ? f.name.split('.').pop() : 'jpg';
         const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}.${ext}`;
         const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, f);
@@ -525,6 +507,37 @@ function DashboardContent() {
         uploadedNames.push(fileName); // 실패 시 정리용
         return fileName;
       }));
+
+      // 촬영일 / 위치 확인 → AI 분석
+      const analyzePromise = (async (): Promise<string> => {
+        const photoDate = await getPhotoDate(photoFiles[0]);
+        const photoDateStr = `${photoDate.getFullYear()}년 ${photoDate.getMonth() + 1}월 ${photoDate.getDate()}일`;
+        const finalLocationData = await getLocationText(photoFiles);
+        console.log(`[타이밍] 촬영일/위치 확인 ${Date.now() - t0}ms`);
+
+        const formData = new FormData();
+        photoFiles.forEach((f) => formData.append('images', f));
+        formData.append('photoDate', photoDateStr);
+        formData.append('photoLocation', finalLocationData);
+        formData.append('projectNumber', projectNumberInput || '미입력');
+        formData.append('workType', workTypeInput || '미입력');
+        formData.append('workDesc', workDescInput || '미입력');
+        formData.append('inspector', workerName);
+
+        const res = await fetch('/api/analyze', { method: 'POST', body: formData });
+        const resData = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(resData.error || '분석 실패');
+        console.log(`[타이밍] AI 분석 완료 ${Date.now() - t0}ms (사용 모델: ${resData.model ?? '?'})`);
+        return resData.report as string;
+      })();
+
+      // 둘 다 끝날 때까지 기다린 뒤 결과 확인 (실패 시에도 업로드된 파일 목록이 완성되어 정리 가능)
+      const [analysisResult, uploadResult] = await Promise.allSettled([analyzePromise, uploadPromise]);
+      if (analysisResult.status === 'rejected') throw analysisResult.reason;
+      if (uploadResult.status === 'rejected') throw uploadResult.reason;
+      const reportText: string = analysisResult.value;
+      const orderedNames: string[] = uploadResult.value;
+      console.log(`[타이밍] 분석+업로드 완료 ${Date.now() - t0}ms`);
 
       const imageUrls = orderedNames
         .map((name) => supabase.storage.from('inspections').getPublicUrl(name).data?.publicUrl)
