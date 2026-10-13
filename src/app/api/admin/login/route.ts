@@ -1,34 +1,64 @@
-// 저장 위치 예: src/app/api/geocode/route.ts
+// 저장 위치: src/app/api/admin/login/route.ts  (파일 이름은 반드시 route.ts)
 import { NextRequest, NextResponse } from 'next/server';
+import {
+  ADMIN_COOKIE,
+  SESSION_TTL_SEC,
+  createSessionToken,
+  safeEqual,
+} from '@/utils/adminAuth';
 
 export const runtime = 'nodejs';
 
-// 좌표(위도/경도) → 한글 주소. 카카오 REST API 키를 브라우저에 노출하지 않기 위한 서버 프록시입니다.
-export async function GET(req: NextRequest) {
-  const lat = Number(req.nextUrl.searchParams.get('lat'));
-  const lng = Number(req.nextUrl.searchParams.get('lng'));
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
-    return NextResponse.json({ error: '좌표가 올바르지 않습니다.' }, { status: 400 });
-  }
+// 한글 입력 방식에 따른 유니코드 차이(NFC/NFD)와 앞뒤 공백을 맞춰서 비교
+const normalize = (s: string) => s.normalize('NFC').trim();
 
-  // 새 변수명(KAKAO_REST_API_KEY)을 우선 사용하고, 전환 기간에는 기존 변수도 허용
-  const key = process.env.KAKAO_REST_API_KEY?.trim() || process.env.NEXT_PUBLIC_KAKAO_REST_API_KEY?.trim();
-  if (!key) return NextResponse.json({ address: null });
-
+// 로그인
+export async function POST(req: NextRequest) {
   try {
-    const res = await fetch(`https://dapi.kakao.com/v2/local/geo/coord2address.json?x=${lng}&y=${lat}`, {
-      headers: { Authorization: `KakaoAK ${key}` },
-    });
-    if (!res.ok) return NextResponse.json({ address: null });
+    const adminName = normalize(process.env.ADMIN_NAME ?? '') || '관리자';
+    const adminPassword = normalize(process.env.ADMIN_PASSWORD ?? '');
 
-    const data = await res.json();
-    const doc = data.documents?.[0];
-    // 도로명 주소 우선, 없으면 지번 주소
-    const address: string | null = doc?.road_address?.address_name || doc?.address?.address_name || null;
-    return NextResponse.json({ address });
-  } catch (err) {
-    console.error('주소 변환 에러:', err);
-    return NextResponse.json({ address: null });
+    if (!adminPassword) {
+      return NextResponse.json({ error: '서버에 관리자 비밀번호가 설정되지 않았습니다.' }, { status: 500 });
+    }
+
+    const body = await req.json().catch(() => ({}));
+    const name = typeof body?.name === 'string' ? normalize(body.name) : '';
+    const password = typeof body?.password === 'string' ? normalize(body.password) : '';
+
+    const nameOk = safeEqual(name, adminName);
+    const passwordOk = safeEqual(password, adminPassword);
+
+    if (!(nameOk && passwordOk)) {
+      // 서버 로그에만 남깁니다 (실제 값은 기록하지 않고, 일치 여부와 글자 수만 기록).
+      console.warn(
+        `[관리자 로그인 실패] 이름 일치: ${nameOk} (입력 ${name.length}자 / 서버 ${adminName.length}자), ` +
+          `비밀번호 일치: ${passwordOk} (입력 ${password.length}자 / 서버 ${adminPassword.length}자)`
+      );
+      await delay(800); // 무차별 대입 완화
+      return NextResponse.json({ error: '관리자 이름 또는 비밀번호가 일치하지 않습니다.' }, { status: 401 });
+    }
+
+    const res = NextResponse.json({ ok: true });
+    res.cookies.set(ADMIN_COOKIE, createSessionToken(), {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+      maxAge: SESSION_TTL_SEC,
+    });
+    return res;
+  } catch (err: any) {
+    console.error('관리자 로그인 에러:', err);
+    return NextResponse.json({ error: err.message || '서버 오류가 발생했습니다.' }, { status: 500 });
   }
+}
+
+// 로그아웃
+export async function DELETE() {
+  const res = NextResponse.json({ ok: true });
+  res.cookies.set(ADMIN_COOKIE, '', { httpOnly: true, path: '/', maxAge: 0 });
+  return res;
 }
