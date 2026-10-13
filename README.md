@@ -20,6 +20,18 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## 관리자 로그인 설정
+
+관리자 로그인은 서버 환경변수로 인증합니다. 프로젝트 루트의 `.env.local`에 아래 값을 설정하고 개발 서버를 재시작하세요.
+
+```dotenv
+ADMIN_NAME=관리자
+ADMIN_PASSWORD=원하는_관리자_비밀번호
+ADMIN_SESSION_SECRET=16자_이상의_랜덤한_비밀값
+```
+
+`ADMIN_NAME`은 생략하면 `관리자`가 사용됩니다. `ADMIN_PASSWORD`는 필수이며, `ADMIN_SESSION_SECRET`은 로그인 세션 서명에 필요합니다. 배포 환경에서는 같은 변수를 호스팅 서비스의 서버 환경변수로 설정하고 재배포하세요. 비밀번호와 세션 비밀값을 클라이언트 코드나 저장소에 커밋하지 마세요.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

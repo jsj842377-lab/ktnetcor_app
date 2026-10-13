@@ -179,6 +179,7 @@ export default function AdminPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [adminName, setAdminName] = useState('');
   const [adminPwd, setAdminPwd] = useState('');
+  const [loginError, setLoginError] = useState('');
 
   // 데이터 상태
   const [allReports, setAllReports] = useState<any[]>([]);
@@ -283,27 +284,34 @@ export default function AdminPage() {
     }
   };
 
-  // ★ 프론트엔드 직접 통과 방식 (Vercel 환경변수 캐시 우회)
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
-    
-    if (adminName === '관리자' && adminPwd === '1234') {
-      setIsSubmitting(true);
-      
-      fetch('/api/admin/login', {
+
+    setIsSubmitting(true);
+    setLoginError('');
+    try {
+      const response = await fetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: '관리자', password: '1234' }),
-      }).catch(() => {});
-      
+        body: JSON.stringify({ name: adminName, password: adminPwd }),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        const error = typeof result === 'object' && result !== null && 'error' in result && typeof result.error === 'string'
+          ? result.error
+          : '관리자 로그인에 실패했습니다.';
+        throw new Error(error);
+      }
+
       setIsAuthorized(true);
       setAdminPwd('');
-      await loadReports(selectedYear, true); 
-      fetchSystemSettings(); 
+      await loadReports(selectedYear, true);
+      fetchSystemSettings();
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : '로그인 요청 중 오류가 발생했습니다.');
+    } finally {
       setIsSubmitting(false);
-    } else {
-      alert('관리자 이름 또는 비밀번호가 일치하지 않습니다.');
     }
   };
 
@@ -372,8 +380,10 @@ export default function AdminPage() {
           <div style={{ fontSize: '40px', marginBottom: '16px' }}>🛡️</div>
           <h2 style={{ margin: '0 0 24px 0', fontSize: '20px', color: theme.textMain }}>최고 관리자 로그인</h2>
 
-          <input type="text" placeholder="관리자 이름" autoComplete="username" value={adminName} onChange={e => setAdminName(e.target.value)} style={{ width: '100%', padding: '14px', marginBottom: '12px', borderRadius: '4px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain, fontSize: '14px' }} required />
-          <input type="password" placeholder="비밀번호" autoComplete="current-password" value={adminPwd} onChange={e => setAdminPwd(e.target.value)} style={{ width: '100%', padding: '14px', marginBottom: '24px', borderRadius: '4px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain, fontSize: '14px' }} required />
+          <input type="text" placeholder="관리자 이름" autoComplete="username" value={adminName} onChange={e => { setAdminName(e.target.value); setLoginError(''); }} style={{ width: '100%', padding: '14px', marginBottom: '12px', borderRadius: '4px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain, fontSize: '14px' }} required />
+          <input type="password" placeholder="비밀번호" autoComplete="current-password" value={adminPwd} onChange={e => { setAdminPwd(e.target.value); setLoginError(''); }} style={{ width: '100%', padding: '14px', marginBottom: '24px', borderRadius: '4px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain, fontSize: '14px' }} required />
+
+          {loginError && <p role="alert" style={{ margin: '-12px 0 16px', color: '#ef4444', fontSize: '13px' }}>{loginError}</p>}
 
           <button type="submit" disabled={isSubmitting} style={{ width: '100%', padding: '16px', background: theme.btnPrimary, color: 'white', border: 'none', borderRadius: '4px', fontSize: '15px', fontWeight: 'bold', cursor: isSubmitting ? 'not-allowed' : 'pointer', opacity: isSubmitting ? 0.7 : 1, marginBottom: '12px' }}>
             {isSubmitting ? '확인 중...' : '관리자 접속'}
