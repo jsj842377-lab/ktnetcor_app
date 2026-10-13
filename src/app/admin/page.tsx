@@ -3,7 +3,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTheme } from '@/context/ThemeContext';
-import { supabase } from '@/utils/supabase';
 import * as XLSX from 'xlsx';
 
 type SafetyStatus = 'ok' | 'danger' | 'unknown';
@@ -16,13 +15,19 @@ const formatDate = (d: Date) =>
 
 const getQuarter = (d: Date) => `Q${Math.floor(d.getMonth() / 3) + 1}`;
 
+/** 엑셀 수식 인젝션 방지: =, +, -, @ 로 시작하는 값 앞에 ' 추가 */
 const safeCell = (value: string) => (/^[=+\-@]/.test(value) ? `'${value}` : value);
 
+/**
+ * AI 보고서 마크다운에서 공사번호/작업공정/안전점검 결과를 추출합니다.
+ * (이전 버전은 표 머리글 '결과(양호/불량)'에 '불량'이 들어 있어 모든 보고서가 X로 판정되는 문제가 있었습니다.)
+ */
 const extractInfoFromMarkdown = (md: string) => {
   const mdString = md || '';
   const projNumMatch = mdString.match(/\*\*공사번호\*\*\s*\|\s*([^|]+?)\s*\|/);
   const workTypeMatch = mdString.match(/\*\*작업공정\*\*\s*\|\s*([^|]+?)\s*\|/);
 
+  // '점검 항목 및 결과' ~ '종합 특이사항' 구간의 표에서 '결과' 열(3번째 칸)만 추출
   const section = mdString.split(/점검\s*항목\s*및\s*결과/)[1]?.split(/종합\s*특이사항/)[0] ?? '';
   const results = section
     .split('\n')
@@ -48,7 +53,7 @@ const STATUS_VIEW: Record<SafetyStatus, { excel: string; label: string; color: s
   unknown: { excel: '확인필요', label: '확인필요', color: '#64748b' },
 };
 
-// ───────────────────────── 보고서 마크다운 렌더러 ─────────────────────────
+// ───────────────────────── 보고서 마크다운 렌더러 (외부 라이브러리 불필요) ─────────────────────────
 type Block =
   | { type: 'heading'; level: number; text: string }
   | { type: 'table'; rows: string[][] }
@@ -89,6 +94,7 @@ const parseMarkdown = (md: string): Block[] => {
   return blocks;
 };
 
+/** **굵게** 처리 */
 const renderInline = (text: string) =>
   text.split(/(\*\*[^*]+\*\*)/g).map((part, idx) =>
     part.startsWith('**') && part.endsWith('**') && part.length > 4
@@ -168,7 +174,37 @@ function ReportView({ markdown, theme }: { markdown: string; theme: any }) {
   );
 }
 
-// ───────────────────────── 메인 컴포넌트 ─────────────────────────
+/** 저장된 사진 주소(쉼표로 구분)를 목록으로 변환. http(s) 주소만 허용 */
+const parsePhotoUrls = (raw: unknown): string[] =>
+  typeof raw === 'string'
+    ? raw.split(',').map((u) => u.trim()).filter((u) => /^https?:\/\//i.test(u))
+    : [];
+
+function PhotoThumb({ url, index, theme }: { url: string; index: number; theme: any }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return (
+      <div style={{ border: `1px dashed ${theme.border}`, padding: '24px 8px', textAlign: 'center', color: theme.textSub, fontSize: '12px' }}>
+        사진 {index + 1}을 불러오지 못했습니다
+      </div>
+    );
+  }
+
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" title="원본 크기로 열기" style={{ display: 'block' }}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt={`현장 사진 ${index + 1}`}
+        loading="lazy"
+        onError={() => setFailed(true)}
+        style={{ width: '100%', height: '220px', objectFit: 'cover', border: `1px solid ${theme.border}`, display: 'block', background: theme.thBg }}
+      />
+    </a>
+  );
+}
+
 export default function AdminPage() {
   const router = useRouter();
   const { isDarkMode } = useTheme();
@@ -179,24 +215,22 @@ export default function AdminPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [adminName, setAdminName] = useState('');
   const [adminPwd, setAdminPwd] = useState('');
-  const [loginError, setLoginError] = useState('');
 
   // 데이터 상태
   const [allReports, setAllReports] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  // AI 모델 관리 상태
-  const [aiModelName, setAiModelName] = useState<string>('로딩 중...');
-  const [isModelUpdating, setIsModelUpdating] = useState<boolean>(false);
-
-  // 필터링 상태
+  // 필터링 상태 (연도, 분기, 이름 검색)
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<string>(currentYear.toString());
   const [selectedQuarter, setSelectedQuarter] = useState<string>('ALL');
   const [searchName, setSearchName] = useState<string>('');
 
+  // 보고서 열람 팝업
   const [selectedReport, setSelectedReport] = useState<any | null>(null);
 
+  // 다크모드 대응 테마
   const theme = isDarkMode ? {
     bg: '#0f172a', cardBg: '#1e293b', textMain: '#f8fafc', textSub: '#94a3b8',
     border: '#334155', btnPrimary: '#3b82f6', inputBg: '#0f172a', thBg: '#334155'
@@ -205,34 +239,7 @@ export default function AdminPage() {
     border: '#cbd5e1', btnPrimary: '#2563eb', inputBg: '#f8fafc', thBg: '#f1f5f9'
   };
 
-  const fetchSystemSettings = async () => {
-    try {
-      const { data } = await supabase.from('system_settings').select('setting_value').eq('setting_key', 'gemini_target_model').single();
-      if (data) setAiModelName(data.setting_value);
-      else setAiModelName('gemini-3.8-flash');
-    } catch (err) {
-      console.error('설정 로드 실패:', err);
-    }
-  };
-
-  const handleUpdateModel = async () => {
-    if (!aiModelName.trim()) return alert('모델 이름을 입력해주세요.');
-    setIsModelUpdating(true);
-    try {
-      const { error } = await supabase.from('system_settings').upsert({
-        setting_key: 'gemini_target_model',
-        setting_value: aiModelName.trim(),
-        updated_at: new Date().toISOString()
-      });
-      if (error) throw error;
-      alert(`✅ AI 모델이 [${aiModelName.trim()}]으로 즉시 변경 및 적용되었습니다.`);
-    } catch (err: any) {
-      alert(`변경 실패: ${err.message}`);
-    } finally {
-      setIsModelUpdating(false);
-    }
-  };
-
+  // 서버에서 해당 연도의 보고서 가져오기 (401이면 로그인 화면으로)
   const loadReports = useCallback(async (year: string, silent = false): Promise<boolean> => {
     setIsLoading(true);
     try {
@@ -241,26 +248,28 @@ export default function AdminPage() {
         setIsAuthorized(false);
         return false;
       }
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || '알 수 없는 오류');
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `서버 오류 (${res.status})`);
 
       setAllReports(json.reports ?? []);
+      setLoadError(null);
       setIsAuthorized(true);
       return true;
     } catch (err: any) {
-      if (!silent) alert(`데이터를 불러오지 못했습니다: ${err.message}`);
+      // 로그인 상태는 유지하고, 대시보드 안에 오류를 표시합니다.
+      if (!silent) setLoadError(err.message || '데이터를 불러오지 못했습니다.');
       return false;
     } finally {
       setIsLoading(false);
     }
   }, []);
 
+  // 새로고침 시 기존 로그인 세션(쿠키) 확인
   useEffect(() => {
-    loadReports(currentYear.toString(), true).then((authorized) => {
-      if (authorized) fetchSystemSettings();
-    }).finally(() => setAuthChecked(true));
+    loadReports(currentYear.toString(), true).finally(() => setAuthChecked(true));
   }, [loadReports, currentYear]);
 
+  // ESC 키로 보고서 팝업 닫기 + 팝업이 열린 동안 배경 스크롤 방지
   useEffect(() => {
     if (!selectedReport) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -284,32 +293,28 @@ export default function AdminPage() {
     }
   };
 
+  // 관리자 로그인 (서버에서 검증)
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
-
     setIsSubmitting(true);
-    setLoginError('');
     try {
-      const response = await fetch('/api/admin/login', {
+      const res = await fetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: adminName, password: adminPwd }),
       });
-      const result: unknown = await response.json();
-      if (!response.ok) {
-        const error = typeof result === 'object' && result !== null && 'error' in result && typeof result.error === 'string'
-          ? result.error
-          : '관리자 로그인에 실패했습니다.';
-        throw new Error(error);
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(json.error || '로그인에 실패했습니다.');
+        return;
       }
-
-      setIsAuthorized(true);
       setAdminPwd('');
-      await loadReports(selectedYear, true);
-      fetchSystemSettings();
-    } catch (err) {
-      setLoginError(err instanceof Error ? err.message : '로그인 요청 중 오류가 발생했습니다.');
+      setLoadError(null);
+      setIsAuthorized(true); // 로그인 성공 → 보고서 조회 결과와 상관없이 대시보드로 이동
+      await loadReports(selectedYear);
+    } catch {
+      alert('서버와 통신하지 못했습니다. 잠시 후 다시 시도해주세요.');
     } finally {
       setIsSubmitting(false);
     }
@@ -329,6 +334,7 @@ export default function AdminPage() {
     loadReports(year);
   };
 
+  // 분기 / 이름 필터 (연도는 서버에서 이미 필터링됨)
   const filteredReports = useMemo(() => {
     const keyword = searchName.trim();
     return allReports.filter((item) => {
@@ -365,6 +371,7 @@ export default function AdminPage() {
     XLSX.writeFile(workbook, fileName);
   };
 
+  // ⏳ 세션 확인 중
   if (!authChecked) {
     return (
       <div style={{ minHeight: '100vh', background: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textSub, fontFamily: "'Pretendard', sans-serif" }}>
@@ -373,6 +380,7 @@ export default function AdminPage() {
     );
   }
 
+  // 🔒 로그인 화면
   if (!isAuthorized) {
     return (
       <div style={{ minHeight: '100vh', background: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Pretendard', sans-serif" }}>
@@ -380,10 +388,8 @@ export default function AdminPage() {
           <div style={{ fontSize: '40px', marginBottom: '16px' }}>🛡️</div>
           <h2 style={{ margin: '0 0 24px 0', fontSize: '20px', color: theme.textMain }}>최고 관리자 로그인</h2>
 
-          <input type="text" placeholder="관리자 이름" autoComplete="username" value={adminName} onChange={e => { setAdminName(e.target.value); setLoginError(''); }} style={{ width: '100%', padding: '14px', marginBottom: '12px', borderRadius: '4px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain, fontSize: '14px' }} required />
-          <input type="password" placeholder="비밀번호" autoComplete="current-password" value={adminPwd} onChange={e => { setAdminPwd(e.target.value); setLoginError(''); }} style={{ width: '100%', padding: '14px', marginBottom: '24px', borderRadius: '4px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain, fontSize: '14px' }} required />
-
-          {loginError && <p role="alert" style={{ margin: '-12px 0 16px', color: '#ef4444', fontSize: '13px' }}>{loginError}</p>}
+          <input type="text" placeholder="관리자 이름" autoComplete="username" value={adminName} onChange={e => setAdminName(e.target.value)} style={{ width: '100%', padding: '14px', marginBottom: '12px', borderRadius: '4px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain, fontSize: '14px' }} required />
+          <input type="password" placeholder="비밀번호" autoComplete="current-password" value={adminPwd} onChange={e => setAdminPwd(e.target.value)} style={{ width: '100%', padding: '14px', marginBottom: '24px', borderRadius: '4px', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain, fontSize: '14px' }} required />
 
           <button type="submit" disabled={isSubmitting} style={{ width: '100%', padding: '16px', background: theme.btnPrimary, color: 'white', border: 'none', borderRadius: '4px', fontSize: '15px', fontWeight: 'bold', cursor: isSubmitting ? 'not-allowed' : 'pointer', opacity: isSubmitting ? 0.7 : 1, marginBottom: '12px' }}>
             {isSubmitting ? '확인 중...' : '관리자 접속'}
@@ -394,6 +400,7 @@ export default function AdminPage() {
     );
   }
 
+  // 🔓 관리자 대시보드
   return (
     <div style={{ minHeight: '100vh', background: theme.bg, padding: '40px 16px', fontFamily: "'Pretendard', sans-serif" }}>
       <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
@@ -406,27 +413,6 @@ export default function AdminPage() {
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={handleLogout} style={{ padding: '10px 20px', background: 'transparent', color: theme.textSub, border: `1px solid ${theme.border}`, borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>로그아웃</button>
             <button onClick={() => router.push('/')} style={{ padding: '10px 20px', background: theme.btnPrimary, color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>메인으로 나가기</button>
-          </div>
-        </div>
-
-        <div style={{ background: theme.cardBg, padding: '20px', borderRadius: '8px', border: `1px solid ${theme.border}`, marginBottom: '24px' }}>
-          <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: theme.textMain }}>⚙️ 실시간 AI 모델 버전 관리</h3>
-          <p style={{ margin: '0 0 16px 0', fontSize: '13px', color: theme.textSub }}>구글 API 정책 변경 시, 소스 코드 수정 없이 즉각 대응할 수 있습니다.</p>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <input 
-              type="text" 
-              value={aiModelName} 
-              onChange={(e) => setAiModelName(e.target.value)} 
-              placeholder="예: gemini-3.8-flash" 
-              style={{ flex: 1, minWidth: '200px', padding: '12px', borderRadius: '4px', border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.textMain, fontWeight: 'bold' }} 
-            />
-            <button 
-              onClick={handleUpdateModel} 
-              disabled={isModelUpdating} 
-              style={{ padding: '12px 24px', background: '#f59e0b', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-            >
-              {isModelUpdating ? '저장 중...' : '저장 및 즉시 적용'}
-            </button>
           </div>
         </div>
 
@@ -464,6 +450,13 @@ export default function AdminPage() {
             </button>
           </div>
         </div>
+
+        {loadError && (
+          <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '14px 16px', borderRadius: '8px', marginBottom: '16px', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <span>보고서를 불러오지 못했습니다: {loadError}</span>
+            <button onClick={() => loadReports(selectedYear)} style={{ padding: '6px 14px', background: '#b91c1c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>다시 시도</button>
+          </div>
+        )}
 
         <div style={{ background: theme.cardBg, borderRadius: '8px', border: `1px solid ${theme.border}`, overflowX: 'auto' }}>
           {isLoading ? (
@@ -509,7 +502,7 @@ export default function AdminPage() {
                             onClick={() => setSelectedReport(report)}
                             style={{ padding: '6px 14px', background: 'transparent', color: theme.btnPrimary, border: `1px solid ${theme.btnPrimary}`, borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}
                           >
-                            📄 보기
+                            📄 보기{parsePhotoUrls(report.image_url).length > 0 ? ` · 📸${parsePhotoUrls(report.image_url).length}` : ''}
                           </button>
                         </td>
                       </tr>
@@ -527,9 +520,6 @@ export default function AdminPage() {
         const dateObj = new Date(selectedReport.created_at);
         const reportText: string = selectedReport.ai_report_text || '';
         const view = STATUS_VIEW[extractInfoFromMarkdown(reportText).status];
-        
-        // ★ 사진 데이터 쉼표(,) 기준으로 분리 후 필터링
-        const savedUrls = selectedReport.image_url ? selectedReport.image_url.split(',').filter(Boolean) : [];
 
         return (
           <div
@@ -563,22 +553,25 @@ export default function AdminPage() {
                   <div style={{ padding: '40px', textAlign: 'center', color: theme.textSub }}>저장된 보고서 내용이 없습니다.</div>
                 )}
 
-                {/* ★ 추가된 팝업 내 현장 사진 렌더링 영역 */}
-                {savedUrls.length > 0 && (
-                  <div style={{ marginTop: '24px', borderTop: `1px solid ${theme.border}`, paddingTop: '16px' }}>
-                    <h4 style={{ margin: '0 0 12px 0', fontSize: '15px', color: theme.textMain, fontWeight: 'bold' }}>📸 첨부된 현장 사진</h4>
-                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                      {savedUrls.map((url: string, idx: number) => (
-                        <img 
-                          key={idx} 
-                          src={url} 
-                          alt={`첨부사진 ${idx + 1}`} 
-                          style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', border: `1px solid ${theme.border}`, borderRadius: '4px', background: theme.inputBg }} 
-                        />
-                      ))}
+                {(() => {
+                  const photos = parsePhotoUrls(selectedReport.image_url);
+                  return (
+                    <div style={{ marginTop: '24px' }}>
+                      <div style={{ fontSize: '15px', fontWeight: 'bold', color: theme.textMain, borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', marginBottom: '14px' }}>
+                        📸 현장 사진 ({photos.length}장)
+                      </div>
+                      {photos.length === 0 ? (
+                        <div style={{ padding: '20px', textAlign: 'center', color: theme.textSub, fontSize: '13px' }}>첨부된 사진이 없습니다.</div>
+                      ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '12px' }}>
+                          {photos.map((url, i) => (
+                            <PhotoThumb key={`${url}-${i}`} url={url} index={i} theme={theme} />
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             </div>
           </div>
