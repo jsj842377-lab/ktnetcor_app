@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
     for (let start = 0; ; start += PAGE_SIZE) {
       const { data, error } = await supabase
         .from('inspections')
-        .select('id, created_at, ai_report_text, workers ( worker_name )')
+        .select('id, created_at, ai_report_text, image_url, workers ( worker_name )')
         .gte('created_at', from)
         .lt('created_at', to)
         .order('created_at', { ascending: false })
