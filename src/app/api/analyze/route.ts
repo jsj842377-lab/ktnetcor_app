@@ -2,24 +2,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
+// ★ 무료 요금제 충돌을 막기 위해 maxDuration 및 preferredRegion 설정 삭제
 export const runtime = 'nodejs';
-export const maxDuration = 60;
-export const preferredRegion = ['icn1']; // ★ API 실행 서버를 한국(서울)으로 강제 고정하여 속도 극대화
 
 export async function POST(req: NextRequest) {
   try {
     const apiKey = process.env.GEMINI_API_KEY?.trim();
-    if (!apiKey) throw new Error('서버에 Gemini API 키가 설정되지 않았습니다.');
+    if (!apiKey) {
+      return NextResponse.json({ error: '서버에 Gemini API 키가 설정되지 않았습니다. Vercel 환경변수를 확인하세요.' }, { status: 500 });
+    }
 
-    // 💥 [핵심] Vercel 환경변수, DB 모두 무시하고 무조건 3.8-flash 로 강제 고정 💥
+    // ★ 구형 모델 404 에러 방지용 절대 고정값
     const TARGET_MODEL = 'gemini-3.8-flash';
 
     const formData = await req.formData();
     const files = formData.getAll('images').filter((f): f is File => typeof f !== 'string' && f.size > 0);
 
-    if (files.length === 0) throw new Error('사진 파일이 전송되지 않았습니다.');
+    if (files.length === 0) {
+      return NextResponse.json({ error: '사진 파일이 전송되지 않았습니다.' }, { status: 400 });
+    }
 
-    // 폼 데이터 추출
     const projectNumber = formData.get('projectNumber')?.toString().trim() || '미상';
     const photoDate = formData.get('photoDate')?.toString().trim() || '알 수 없음';
     const workType = formData.get('workType')?.toString().trim() || '일반작업';
@@ -60,7 +62,6 @@ export async function POST(req: NextRequest) {
 | ( ) |
 `;
 
-    // 이미지 파일 병렬 변환
     const imageParts = await Promise.all(
       files.map(async (file) => {
         const buffer = Buffer.from(await file.arrayBuffer());
@@ -78,7 +79,9 @@ export async function POST(req: NextRequest) {
     let text = result.response.text();
     text = text.replace(/^```(?:markdown|md)?\s*\n/i, '').replace(/\n?```\s*$/, '').trim();
 
-    if (!text) throw new Error('AI 분석 결과가 비어 있습니다.');
+    if (!text) {
+      return NextResponse.json({ error: 'AI 분석 결과가 비어 있습니다.' }, { status: 502 });
+    }
 
     return NextResponse.json({ report: text, model: TARGET_MODEL });
 
