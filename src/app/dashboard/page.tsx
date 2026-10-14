@@ -44,26 +44,58 @@ async function getPhotoDate(file: File): Promise<Date> {
   return new Date(file.lastModified);
 }
 
-/** 사진 GPS → 주소 (카카오 키는 서버 /api/geocode 에서만 사용) */
-async function getLocationText(files: File[]): Promise<string> {
-  for (const f of files) {
-    try {
-      const gps = await exifr.gps(f);
-      if (!gps) continue;
+/** 위도(lat), 경도(lon)를 받아 한글 주소를 반환하는 유틸 함수 */
+const convertCoordsToAddress = async (lat: number, lon: number): Promise<string> => {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1&accept-language=ko`
+    );
+    const data = await res.json();
+    const addr = data?.address;
+    if (addr) {
+      const parts = [
+        addr.province || addr.state || '',
+        addr.city || addr.county || '',
+        addr.borough || addr.city_district || addr.district || '',
+        addr.quarter || addr.suburb || addr.neighbourhood || addr.town || addr.village || '',
+        addr.road || '',
+        addr.house_number || '',
+      ].filter(Boolean);
+      const uniqueParts = parts.filter((item, idx) => parts.indexOf(item) === idx);
+      if (uniqueParts.length >= 2) return uniqueParts.join(' ');
+    }
 
-      const coords = `${gps.latitude.toFixed(6)}, ${gps.longitude.toFixed(6)}`;
-      try {
-        const res = await fetch(`/api/geocode?lat=${gps.latitude}&lng=${gps.longitude}`);
-        if (res.ok) {
-          const json = await res.json();
-          if (json.address) return json.address;
-        }
-      } catch {
-        // 주소 변환 실패 → 좌표로 폴백
+    if (data?.display_name) {
+      const reversedAddress = data.display_name
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter((s: string) => s !== '대한민국' && s !== 'South Korea' && !/^\d{5}$/.test(s))
+        .reverse()
+        .join(' ');
+      if (reversedAddress) return reversedAddress;
+    }
+  } catch (e) {
+    console.warn('주소 변환 실패:', e);
+  }
+  return `${lat.toFixed(6)}, ${lon.toFixed(6)}`; // 실패 시에만 좌표 반환 (이후 백엔드가 재변환함)
+};
+
+/** ★ 복원된 함수: 첨부된 사진들에서 GPS 좌표를 추출한 뒤 한글 주소로 변환 */
+async function getLocationText(photoFiles: File[]): Promise<string> {
+  for (const file of photoFiles) {
+    try {
+      const gps = await exifr.gps(file);
+      if (
+        gps &&
+        typeof gps.latitude === 'number' &&
+        typeof gps.longitude === 'number' &&
+        !isNaN(gps.latitude) &&
+        !isNaN(gps.longitude)
+      ) {
+        return await convertCoordsToAddress(gps.latitude, gps.longitude);
       }
-      return coords;
-    } catch (err) {
-      console.log('GPS 추출 실패', err);
+    } catch {
+      // 현재 사진에 GPS 정보가 없으면 다음 사진 확인
     }
   }
   return '위치 정보 없음';
@@ -498,7 +530,6 @@ function DashboardContent() {
       const t0 = Date.now();
 
       // 사진 업로드를 AI 분석과 동시에 시작 (서로 기다리지 않게 해서 전체 대기 시간을 줄임)
-      // Promise.all 은 입력 순서대로 결과를 돌려주므로 사진 순서(시간순)가 그대로 유지됩니다.
       const uploadPromise = Promise.all(photoFiles.map(async (f) => {
         const ext = f.name && f.name.includes('.') ? f.name.split('.').pop() : 'jpg';
         const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}.${ext}`;
@@ -531,7 +562,7 @@ function DashboardContent() {
         return resData.report as string;
       })();
 
-      // 둘 다 끝날 때까지 기다린 뒤 결과 확인 (실패 시에도 업로드된 파일 목록이 완성되어 정리 가능)
+      // 둘 다 끝날 때까지 기다린 뒤 결과 확인
       const [analysisResult, uploadResult] = await Promise.allSettled([analyzePromise, uploadPromise]);
       if (analysisResult.status === 'rejected') throw analysisResult.reason;
       if (uploadResult.status === 'rejected') throw uploadResult.reason;

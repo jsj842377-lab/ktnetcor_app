@@ -2,17 +2,85 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// ★ 무료 요금제 충돌을 막기 위해 maxDuration 및 preferredRegion 설정 삭제
 export const runtime = 'nodejs';
+
+/**
+ * ★ 추가된 핵심 함수: "37.398022, 126.931778" 형태의 좌표를 감지하여 한글 주소로 자동 변환
+ */
+async function resolveLocationToKoreanAddress(rawLocation: string): Promise<string> {
+  const trimmed = rawLocation.trim();
+  // 위도, 경도 숫자 좌표 패턴인지 정규식으로 검사 (예: "37.398022, 126.931778")
+  const coordMatch = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+  if (!coordMatch) {
+    return trimmed; // 이미 한글 주소이거나 일반 텍스트면 그대로 반환
+  }
+
+  const lat = coordMatch[1];
+  const lon = coordMatch[2];
+
+  try {
+    // 3초 타임아웃 설정 (Vercel 10초 제한 방지)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1&accept-language=ko`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'KTNetcorSafetyInspectionApp/1.0',
+        'Accept-Language': 'ko-KR,ko;q=0.9',
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!res.ok) return trimmed;
+    const data = await res.json();
+
+    // 1순위: 행정구역 객체(address)를 한국식 주소 순서(시/도 -> 시/군/구 -> 동/읍/면 -> 도로명/번지)로 조합
+    const addr = data?.address;
+    if (addr) {
+      const parts = [
+        addr.province || addr.state || '',
+        addr.city || addr.county || '',
+        addr.borough || addr.city_district || addr.district || '',
+        addr.quarter || addr.suburb || addr.neighbourhood || addr.town || addr.village || '',
+        addr.road || '',
+        addr.house_number || '',
+      ].filter(Boolean);
+
+      // 중복 단어 제거 (예: 시/도와 시/군/구가 중복될 경우)
+      const uniqueParts = parts.filter((item, idx) => parts.indexOf(item) === idx);
+      if (uniqueParts.length >= 2) {
+        return uniqueParts.join(' ');
+      }
+    }
+
+    // 2순위: display_name 문자열을 역순(대한민국 큰 단위부터)으로 정렬하여 반환
+    if (data?.display_name) {
+      const reversedAddress = data.display_name
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter((s: string) => s !== '대한민국' && s !== 'South Korea' && !/^\d{5}$/.test(s))
+        .reverse()
+        .join(' ');
+      if (reversedAddress) return reversedAddress;
+    }
+
+    return trimmed;
+  } catch (err) {
+    console.warn('좌표 -> 주소 변환 실패, 원본 값 유지:', err);
+    return trimmed;
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
     const apiKey = process.env.GEMINI_API_KEY?.trim();
     if (!apiKey) {
-      return NextResponse.json({ error: '서버에 Gemini API 키가 설정되지 않았습니다. Vercel 환경변수를 확인하세요.' }, { status: 500 });
+      return NextResponse.json({ error: '서버에 Gemini API 키가 설정되지 않았습니다.' }, { status: 500 });
     }
 
-    // ★ 구형 모델 404 에러 방지용 절대 고정값
     const TARGET_MODEL = 'gemini-3.8-flash';
 
     const formData = await req.formData();
@@ -22,12 +90,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '사진 파일이 전송되지 않았습니다.' }, { status: 400 });
     }
 
-    const projectNumber = formData.get('projectNumber')?.toString().trim() || '미상';
+    const projectNumber = formData.get('projectNumber')?.toString().trim() || '미입력';
     const photoDate = formData.get('photoDate')?.toString().trim() || '알 수 없음';
-    const workType = formData.get('workType')?.toString().trim() || '일반작업';
+    const workType = formData.get('workType')?.toString().trim() || '미입력';
     const inspector = formData.get('inspector')?.toString().trim() || '미상';
-    const workDesc = formData.get('workDesc')?.toString().trim() || '현장 점검';
-    const photoLocation = formData.get('photoLocation')?.toString().trim() || '위치 정보 없음';
+    const workDesc = formData.get('workDesc')?.toString().trim() || '미입력';
+    const rawPhotoLocation = formData.get('photoLocation')?.toString().trim() || '위치 정보 없음';
+
+    // ★ 좌표 형태("37.398022, 126.931778")일 경우 한글 주소로 즉시 변환
+    const photoLocation = await resolveLocationToKoreanAddress(rawPhotoLocation);
 
     const prompt = `당신은 B2B 산업 현장 안전점검 AI입니다. 첨부된 사진들을 꼼꼼히 분석하여, 반드시 아래의 [현장 안전점검 결과보고서] 양식과 100% 동일한 마크다운(Markdown) 형태로 결과를 작성해주세요.
 
@@ -83,7 +154,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'AI 분석 결과가 비어 있습니다.' }, { status: 502 });
     }
 
-    return NextResponse.json({ report: text, model: TARGET_MODEL });
+    return NextResponse.json({ report: text, model: TARGET_MODEL, resolvedLocation: photoLocation });
 
   } catch (error: any) {
     console.error('API 내부 에러:', error);
