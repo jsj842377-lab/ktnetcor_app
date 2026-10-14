@@ -21,6 +21,9 @@ import {
 } from '@/utils/reportMarkdown';
 import ImageLightbox from '@/components/ImageLightbox';
 import { PhotoThumb } from '@/components/PhotoThumb';
+import OnePageReport from '@/components/OnePageReport';
+import EmailModal from '@/components/EmailModal';
+import { saveReportAsMarkdown, saveReportAsText, saveReportAsHtml } from '@/utils/reportSaver';
 
 const ALLOWED_WORKERS = ['전현진', '김관희', '김용', '박상원', '박용화', '박현지', '안주형', '윤성우', '임동균', '김명현'];
 
@@ -173,6 +176,16 @@ function DashboardContent() {
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState<number>(0);
   const [lightboxTitle, setLightboxTitle] = useState<string>('');
+
+  // 이메일 전송 모달 상태
+  const [emailModalOpen, setEmailModalOpen] = useState<boolean>(false);
+  const [emailReportText, setEmailReportText] = useState<string>('');
+  const [emailPhotoUrls, setEmailPhotoUrls] = useState<string[]>([]);
+  const [emailDateStr, setEmailDateStr] = useState<string>('');
+
+  // 저장 메뉴 상태 및 안내 알림
+  const [showSaveMenu, setShowSaveMenu] = useState<boolean>(false);
+  const [saveToast, setSaveToast] = useState<string | null>(null);
 
   const theme = isDarkMode ? {
     bg: '#0f172a', cardBg: '#1e293b', textMain: '#f8fafc', textSub: '#94a3b8',
@@ -383,20 +396,28 @@ function DashboardContent() {
   };
 
   const handleCapturePDF = async () => {
-    const element = reportRef.current;
+    const element = document.getElementById('current-report-a4-pdf') || reportRef.current;
     if (!element) return;
-    const html2pdf = (await import('html2pdf.js')).default;
+    setIsPdfGenerating(true);
 
-    const d = new Date();
-    const opt = {
-      margin: 10,
-      filename: `현장점검기록_${formatYMD(d)}_${formatHM(d)}_${workerName}.pdf`,
-      image: { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: isDarkMode ? '#1e293b' : '#ffffff' },
-      jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
-      pagebreak: { mode: 'css' }
-    };
-    html2pdf().set(opt).from(element).save();
+    try {
+      await waitForImages(element);
+      const html2pdf = (await import('html2pdf.js')).default;
+      const d = new Date();
+      const opt = {
+        margin: [8, 10, 8, 10] as [number, number, number, number],
+        filename: `현장안전점검보고서_1장_${formatYMD(d)}_${workerName}.pdf`,
+        image: { type: 'jpeg' as const, quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollY: 0, windowWidth: 794 },
+        jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
+        pagebreak: { mode: 'avoid-all' }
+      };
+      await html2pdf().set(opt).from(element).save();
+    } catch (err: any) {
+      alert(`PDF 생성 실패: ${err.message || err}`);
+    } finally {
+      setIsPdfGenerating(false);
+    }
   };
 
   const handleDownloadPastPDF = async (item: any) => {
@@ -404,30 +425,33 @@ function DashboardContent() {
     setPrintItem(item);
 
     setTimeout(async () => {
-      const element = document.getElementById('past-report-pdf');
+      const element = document.getElementById('past-report-a4-pdf');
       if (!element) {
         setIsPdfGenerating(false);
         return;
       }
 
-      await waitForImages(element);
+      try {
+        await waitForImages(element);
+        const d = new Date(item.created_at);
+        const html2pdf = (await import('html2pdf.js')).default;
+        const opt = {
+          margin: [8, 10, 8, 10] as [number, number, number, number],
+          filename: `현장안전점검보고서_1장_${formatYMD(d)}_${workerName}.pdf`,
+          image: { type: 'jpeg' as const, quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollY: 0, windowWidth: 794 },
+          jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
+          pagebreak: { mode: 'avoid-all' }
+        };
 
-      const d = new Date(item.created_at);
-      const html2pdf = (await import('html2pdf.js')).default;
-      const opt = {
-        margin: 15,
-        filename: `현장점검기록_${formatYMD(d)}_${formatHM(d)}_${workerName}.pdf`,
-        image: { type: 'jpeg' as const, quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
-        jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
-        pagebreak: { mode: ['css', 'legacy'] }
-      };
-
-      html2pdf().set(opt).from(element).save().then(() => {
+        await html2pdf().set(opt).from(element).save();
+      } catch (err: any) {
+        alert(`PDF 다운로드 실패: ${err.message || err}`);
+      } finally {
         setPrintItem(null);
         setIsPdfGenerating(false);
-      });
-    }, 100);
+      }
+    }, 150);
   };
 
   const handlePrintPastReport = async (item: any) => {
@@ -435,13 +459,45 @@ function DashboardContent() {
     setPrintItem(item);
 
     setTimeout(async () => {
-      await waitForImages(document.getElementById('past-report-pdf'));
+      await waitForImages(document.getElementById('past-report-a4-pdf'));
       setIsPdfGenerating(false);
       setTimeout(() => {
         window.print();
         setPrintItem(null);
-      }, 300);
-    }, 100);
+      }, 200);
+    }, 150);
+  };
+
+  const triggerEmailModal = (reportText: string, photos: string[], date: string) => {
+    setEmailReportText(reportText);
+    setEmailPhotoUrls(photos);
+    setEmailDateStr(date);
+    setEmailModalOpen(true);
+  };
+
+  const showToast = (msg: string) => {
+    setSaveToast(msg);
+    setTimeout(() => setSaveToast(null), 3000);
+  };
+
+  const handleSaveAsMarkdown = (reportText: string, date: string) => {
+    saveReportAsMarkdown(reportText, `현장안전점검보고서_${date}_${workerName}.md`);
+    showToast('마크다운(.md) 파일로 저장되었습니다.');
+    setShowSaveMenu(false);
+  };
+
+  const handleSaveAsText = (reportText: string, date: string) => {
+    saveReportAsText(reportText, `현장안전점검보고서_${date}_${workerName}.txt`);
+    showToast('텍스트(.txt) 파일로 저장되었습니다.');
+    setShowSaveMenu(false);
+  };
+
+  const handleSaveAsHtml = (date: string) => {
+    const reportElem = document.getElementById('current-report-a4-pdf') || reportRef.current;
+    const content = reportElem ? reportElem.innerHTML : (report || '');
+    saveReportAsHtml(content, `${date} ${workerName} 안전점검 보고서`, `현장안전점검보고서_1장_${date}_${workerName}.html`);
+    showToast('단일 HTML 파일로 저장되었습니다.');
+    setShowSaveMenu(false);
   };
 
   const toggleGender = () => { const newGender = gender === 'M' ? 'F' : 'M'; setGender(newGender); localStorage.setItem(`kt_gender_${workerName}`, newGender); };
@@ -652,13 +708,49 @@ function DashboardContent() {
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes fadeInOut { 0% { opacity: 0; transform: translateY(10px); } 20% { opacity: 1; transform: translateY(0); } 80% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-10px); } }
         .avoid-break { page-break-inside: avoid !important; break-inside: avoid !important; }
-        @media screen { .print-only { display: none !important; } }
+        @page {
+          size: A4 portrait;
+          margin: 8mm 10mm;
+        }
+        @media screen {
+          .print-only { display: none !important; }
+        }
         @media print {
-          body, html { background-color: #fff !important; color: #000 !important; margin: 0; padding: 0; }
-          body * { visibility: hidden; }
-          .print-area, .print-area * { visibility: visible; color: #000 !important; }
-          .print-area { position: absolute; left: 0; top: 0; width: 100%; }
-          .no-print { display: none !important; }
+          html, body {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 210mm !important;
+            height: 297mm !important;
+            max-height: 297mm !important;
+            overflow: hidden !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          body * {
+            visibility: hidden;
+          }
+          .print-area-1page, .print-area-1page * {
+            visibility: visible;
+            color: #000000 !important;
+          }
+          .print-area-1page {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            max-width: 190mm !important;
+            margin: 0 auto !important;
+            box-sizing: border-box !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+          }
+          .no-print {
+            display: none !important;
+          }
         }
       `}} />
 
@@ -853,43 +945,196 @@ function DashboardContent() {
             </div>
           ) : (
             <>
-              <div ref={reportRef}>
-                <h2 className="print-only" style={{ textAlign: 'center', fontSize: '24px', borderBottom: `2px solid #000`, paddingBottom: '16px', marginBottom: '24px', color: '#000' }}>
-                  {todayStr} {workerName} 안전점검 보고서
-                </h2>
-                <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
-                {previewUrls.length > 0 && (
-                  <div style={{ marginTop: '20px' }}>
-                    <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '20px 0 12px 0', color: theme.textMain, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>📸 현장 사진 (첨부 {previewUrls.length}장)</span>
-                      <span style={{ fontSize: '12px', color: theme.textSub, fontWeight: 'normal' }}>클릭하여 사진 확대 및 상세 검사</span>
-                    </h4>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
-                      {previewUrls.map((url, i) => (
-                        <PhotoThumb
-                          key={i}
-                          url={url}
-                          index={i}
-                          theme={theme}
-                          height="200px"
-                          className="avoid-break"
-                          onClick={() => {
-                            setLightboxImages(previewUrls);
-                            setLightboxIndex(i);
-                            setLightboxTitle(`${todayStr} 현장 안전점검 첨부 사진`);
-                            setLightboxOpen(true);
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
+              <div
+                ref={reportRef}
+                className={printItem ? "no-print" : "print-area-1page"}
+              >
+                <OnePageReport
+                  id="current-report-a4-pdf"
+                  reportText={report}
+                  photoUrls={previewUrls}
+                  workerName={workerName}
+                  dateStr={todayStr}
+                  onPhotoClick={(i) => {
+                    setLightboxImages(previewUrls);
+                    setLightboxIndex(i);
+                    setLightboxTitle(`${todayStr} 현장 안전점검 첨부 사진`);
+                    setLightboxOpen(true);
+                  }}
+                />
               </div>
 
-              <div className="no-print" style={{ display: 'flex', gap: '10px', marginTop: '20px', flexWrap: 'wrap' }}>
-                <button onClick={handleStartEdit} style={{ flex: 1, minWidth: '100px', padding: '12px', cursor: 'pointer', borderRadius: '0', border: `1px solid ${theme.border}`, background: theme.btnCancel, color: theme.textMain, fontWeight: 'bold' }}>수정</button>
-                <button onClick={() => window.print()} style={{ flex: 1, minWidth: '100px', padding: '12px', background: '#10b981', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>흰 바탕 인쇄</button>
-                <button onClick={handleCapturePDF} style={{ flex: 1, minWidth: '120px', padding: '12px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>다크모드 원본 캡처</button>
+              <div className="no-print" style={{ display: 'flex', gap: '8px', marginTop: '16px', flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleStartEdit}
+                  style={{
+                    flex: '1 1 120px',
+                    padding: '12px',
+                    cursor: 'pointer',
+                    borderRadius: '4px',
+                    border: `1px solid ${theme.border}`,
+                    background: theme.btnCancel,
+                    color: theme.textMain,
+                    fontWeight: 'bold',
+                    fontSize: '13px',
+                  }}
+                >
+                  ✏️ 조치사항 수정
+                </button>
+
+                {/* 이메일 전송 버튼 */}
+                <button
+                  onClick={() => triggerEmailModal(report, previewUrls, todayStr)}
+                  style={{
+                    flex: '1.2 1 130px',
+                    padding: '12px',
+                    background: '#0284c7',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    fontSize: '13px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  ✉️ 메일로 전송
+                </button>
+
+                {/* 파일 저장 드롭다운 메뉴 토글 버튼 */}
+                <div style={{ position: 'relative', flex: '1.2 1 130px' }}>
+                  <button
+                    onClick={() => setShowSaveMenu(!showSaveMenu)}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      background: '#4f46e5',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontWeight: 'bold',
+                      fontSize: '13px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    💾 파일로 저장 {showSaveMenu ? '▲' : '▼'}
+                  </button>
+
+                  {/* 저장 메뉴 팝오버 */}
+                  {showSaveMenu && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        bottom: '100%',
+                        left: 0,
+                        right: 0,
+                        marginBottom: '6px',
+                        background: theme.cardBg,
+                        border: `1px solid ${theme.border}`,
+                        borderRadius: '6px',
+                        boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
+                        overflow: 'hidden',
+                        zIndex: 50,
+                        display: 'flex',
+                        flexDirection: 'column',
+                      }}
+                    >
+                      <button
+                        onClick={() => handleSaveAsMarkdown(report, todayStr)}
+                        style={{
+                          padding: '10px 14px',
+                          border: 'none',
+                          borderBottom: `1px solid ${theme.border}`,
+                          background: 'transparent',
+                          color: theme.textMain,
+                          textAlign: 'left',
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                        }}
+                      >
+                        📄 마크다운 (.md) 저장
+                      </button>
+                      <button
+                        onClick={() => handleSaveAsText(report, todayStr)}
+                        style={{
+                          padding: '10px 14px',
+                          border: 'none',
+                          borderBottom: `1px solid ${theme.border}`,
+                          background: 'transparent',
+                          color: theme.textMain,
+                          textAlign: 'left',
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                        }}
+                      >
+                        📝 일반 텍스트 (.txt) 저장
+                      </button>
+                      <button
+                        onClick={() => handleSaveAsHtml(todayStr)}
+                        style={{
+                          padding: '10px 14px',
+                          border: 'none',
+                          background: 'transparent',
+                          color: theme.textMain,
+                          textAlign: 'left',
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                        }}
+                      >
+                        🌐 단일 웹문서 (.html) 저장
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => window.print()}
+                  style={{
+                    flex: '1 1 110px',
+                    padding: '12px',
+                    background: '#10b981',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    fontSize: '13px',
+                  }}
+                >
+                  🖨️ 1장 인쇄 (A4)
+                </button>
+                <button
+                  onClick={handleCapturePDF}
+                  style={{
+                    flex: '1.2 1 130px',
+                    padding: '12px',
+                    background: '#2563eb',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    fontSize: '13px',
+                  }}
+                >
+                  📥 1장 PDF 다운로드
+                </button>
               </div>
             </>
           )}
@@ -962,14 +1207,54 @@ function DashboardContent() {
                         </div>
                       )}
 
-                      <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '20px', flexWrap: 'wrap' }}>
                         {showTrash ? (
                           <button onClick={() => handleRestore(item.id)} style={{ flex: 1, padding: '14px', background: '#10b981', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>♻️ 정상 기록으로 복구</button>
                         ) : (
                           <>
-                            <button onClick={() => handlePrintPastReport(item)} style={{ flex: 1, padding: '14px', background: theme.btnCancel, color: theme.textMain, border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>인쇄</button>
-                            <button onClick={() => handleDownloadPastPDF(item)} style={{ flex: 1, padding: '14px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>PDF 다운로드</button>
-                            <button onClick={() => handleSoftDelete(item.id)} style={{ flex: 0.5, padding: '14px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>삭제</button>
+                            <button
+                              onClick={() => triggerEmailModal(item.ai_report_text || '', savedUrls, reportDate)}
+                              style={{
+                                flex: '1 1 110px',
+                                padding: '10px 12px',
+                                background: '#0284c7',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontWeight: 'bold',
+                                fontSize: '12px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '4px',
+                              }}
+                            >
+                              ✉️ 메일 전송
+                            </button>
+                            <button
+                              onClick={() => handleSaveAsMarkdown(item.ai_report_text || '', reportDate)}
+                              style={{
+                                flex: '0.9 1 90px',
+                                padding: '10px 12px',
+                                background: '#4f46e5',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontWeight: 'bold',
+                                fontSize: '12px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '4px',
+                              }}
+                            >
+                              💾 .md 저장
+                            </button>
+                            <button onClick={() => handlePrintPastReport(item)} style={{ flex: '1 1 90px', padding: '10px 12px', background: theme.btnCancel, color: theme.textMain, border: `1px solid ${theme.border}`, borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>🖨️ 1장 인쇄</button>
+                            <button onClick={() => handleDownloadPastPDF(item)} style={{ flex: '1.2 1 110px', padding: '10px 12px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>📥 1장 PDF 다운로드</button>
+                            <button onClick={() => handleSoftDelete(item.id)} style={{ flex: '0.5 1 60px', padding: '10px 12px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>삭제</button>
                           </>
                         )}
                       </div>
@@ -985,23 +1270,18 @@ function DashboardContent() {
       {printItem && (() => {
         const pastDate = new Date(printItem.created_at);
         const pastDateStr = formatYMD(pastDate);
+        const pastPhotos = printItem.image_url ? printItem.image_url.split(',').filter(Boolean) : [];
 
         return (
-          <div className="print-area print-only" style={{ background: 'white', color: 'black', width: '100%' }}>
-            <div id="past-report-pdf" style={{ padding: '40px', background: 'white', color: 'black', width: '100%', maxWidth: '800px', margin: '0 auto', boxSizing: 'border-box' }}>
-              <h2 style={{ textAlign: 'center', fontSize: '24px', borderBottom: '2px solid black', paddingBottom: '16px', marginBottom: '24px', color: 'black' }}>
-                {pastDateStr} {workerName} 안전점검 보고서
-              </h2>
-              <div style={{ color: 'black' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{printItem.ai_report_text}</ReactMarkdown></div>
-              {printItem.image_url && (
-                <div style={{ marginTop: '30px', pageBreakInside: 'avoid' }}>
-                  <h4 style={{ width: '100%', borderBottom: `2px solid black`, paddingBottom: '8px', margin: '20px 0 15px 0', color: 'black', fontSize: '18px' }}>📸 현장 사진 (첨부)</h4>
-                  <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
-                    {printItem.image_url.split(',').filter(Boolean).map((u: string, i: number) => (<img key={i} src={u} crossOrigin="anonymous" className="avoid-break" style={{ width: '47%', height: '300px', objectFit: 'cover', border: `1px solid #ccc` }} alt="첨부사진" />))}
-                  </div>
-                </div>
-              )}
-            </div>
+          <div className="print-area-1page print-only" style={{ background: '#ffffff', color: '#000000', width: '100%' }}>
+            <OnePageReport
+              id="past-report-a4-pdf"
+              reportText={printItem.ai_report_text || ''}
+              photoUrls={pastPhotos}
+              workerName={printItem.workers?.worker_name || workerName}
+              dateStr={pastDateStr}
+              isPrintVersion={true}
+            />
           </div>
         );
       })()}
@@ -1014,6 +1294,42 @@ function DashboardContent() {
         title={lightboxTitle}
         onClose={() => setLightboxOpen(false)}
       />
+
+      {/* ✉️ 안전점검 보고서 이메일 전송 모달 */}
+      <EmailModal
+        isOpen={emailModalOpen}
+        onClose={() => setEmailModalOpen(false)}
+        reportMarkdown={emailReportText}
+        photoUrls={emailPhotoUrls}
+        workerName={workerName}
+        dateStr={emailDateStr}
+      />
+
+      {/* 💾 파일 저장 완료 안내 토스트 */}
+      {saveToast && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#10b981',
+            color: '#ffffff',
+            padding: '12px 24px',
+            borderRadius: '8px',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.25)',
+            fontSize: '14px',
+            fontWeight: 'bold',
+            zIndex: 10001,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <span>✓</span>
+          <span>{saveToast}</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -6,6 +6,8 @@ import { useTheme } from '@/context/ThemeContext';
 import * as XLSX from 'xlsx';
 import ImageLightbox from '@/components/ImageLightbox';
 import { PhotoThumb } from '@/components/PhotoThumb';
+import EmailModal from '@/components/EmailModal';
+import { saveReportAsMarkdown, saveReportAsText } from '@/utils/reportSaver';
 
 type SafetyStatus = 'ok' | 'danger' | 'unknown';
 
@@ -191,6 +193,10 @@ export default function AdminPage() {
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [lightboxTitle, setLightboxTitle] = useState('');
+
+  // 이메일 전송 및 저장 안내 알림 상태
+  const [adminEmailOpen, setAdminEmailOpen] = useState(false);
+  const [adminToast, setAdminToast] = useState<string | null>(null);
 
   // 로그인 및 권한 상태
   const [authChecked, setAuthChecked] = useState(false);
@@ -523,7 +529,46 @@ export default function AdminPage() {
                     {view.label}
                   </span>
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => setAdminEmailOpen(true)}
+                    disabled={!reportText}
+                    style={{
+                      padding: '8px 14px',
+                      background: '#0284c7',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: reportText ? 'pointer' : 'not-allowed',
+                      fontSize: '13px',
+                      fontWeight: 'bold',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                    }}
+                  >
+                    ✉️ 메일 전송
+                  </button>
+                  <button
+                    onClick={() => {
+                      saveReportAsMarkdown(reportText, `현장안전점검_${selectedReport.workers?.worker_name || '미상'}_${formatDate(dateObj)}.md`);
+                      setAdminToast('마크다운(.md) 파일로 저장되었습니다.');
+                      setTimeout(() => setAdminToast(null), 3000);
+                    }}
+                    disabled={!reportText}
+                    style={{
+                      padding: '8px 14px',
+                      background: '#4f46e5',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: reportText ? 'pointer' : 'not-allowed',
+                      fontSize: '13px',
+                      fontWeight: 'bold',
+                    }}
+                  >
+                    💾 .md 저장
+                  </button>
                   <button onClick={() => handleCopyReport(reportText)} disabled={!reportText} style={{ padding: '8px 14px', background: 'transparent', color: theme.textSub, border: `1px solid ${theme.border}`, borderRadius: '4px', cursor: reportText ? 'pointer' : 'not-allowed', fontSize: '13px', fontWeight: 'bold' }}>복사</button>
                   <button onClick={() => setSelectedReport(null)} style={{ padding: '8px 14px', background: theme.btnPrimary, color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}>닫기</button>
                 </div>
@@ -580,6 +625,44 @@ export default function AdminPage() {
         title={lightboxTitle}
         onClose={() => setLightboxOpen(false)}
       />
+
+      {/* ✉️ 이메일 전송 모달 */}
+      {selectedReport && (
+        <EmailModal
+          isOpen={adminEmailOpen}
+          onClose={() => setAdminEmailOpen(false)}
+          reportMarkdown={selectedReport.ai_report_text || ''}
+          photoUrls={parsePhotoUrls(selectedReport.image_url)}
+          workerName={selectedReport.workers?.worker_name || '미상'}
+          dateStr={formatDate(new Date(selectedReport.created_at))}
+        />
+      )}
+
+      {/* 💾 파일 저장 안내 토스트 */}
+      {adminToast && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#10b981',
+            color: '#ffffff',
+            padding: '12px 24px',
+            borderRadius: '8px',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.25)',
+            fontSize: '14px',
+            fontWeight: 'bold',
+            zIndex: 10001,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <span>✓</span>
+          <span>{adminToast}</span>
+        </div>
+      )}
     </div>
   );
 }
