@@ -15,10 +15,13 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-// ★ 웹사이트 탭 이름과 설명 (안전점검 시스템에 맞게 수정)
 export const metadata: Metadata = {
   title: "안전점검 시스템",
   description: "경기설계팀 현장 안전점검 보고 시스템",
+  openGraph: {
+    title: "안전점검 시스템",
+    description: "경기설계팀 현장 안전점검 보고 시스템",
+  },
 };
 
 export default function RootLayout({ 

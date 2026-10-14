@@ -1,0 +1,6 @@
+{
+  "name": "안전점검 시스템",
+  "description": "경기설계팀 현장 안전점검 보고 시스템",
+  "permissions": [],
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

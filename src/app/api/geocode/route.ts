@@ -1,6 +1,5 @@
-// 저장 위치: src/app/api/analyze/route.ts  (파일 이름은 반드시 route.ts)
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { createClient } from '@supabase/supabase-js';
 
 export const runtime = 'nodejs';
@@ -236,7 +235,14 @@ export async function POST(req: NextRequest) {
     );
 
     const prompt = buildPrompt(info);
-    const genAI = new GoogleGenerativeAI(apiKey);
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
     const { names: modelNames, configured } = await resolveModelCandidates(apiKey);
     console.log(`[모델] 지정: ${configured ?? '(없음)'} / 시도 순서: ${modelNames.join(' → ')}`);
 
@@ -247,15 +253,19 @@ export async function POST(req: NextRequest) {
     let lastError: unknown;
 
     modelLoop: for (const modelName of modelNames) {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: { temperature: 0.2 },
-      });
-
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
-          const result = await model.generateContent([prompt, ...imageParts]);
-          const text = stripCodeFence(result.response.text());
+          const result = await ai.models.generateContent({
+            model: modelName,
+            contents: [
+              ...imageParts,
+              { text: prompt },
+            ],
+            config: {
+              temperature: 0.2,
+            },
+          });
+          const text = stripCodeFence(result.text || '');
           if (!text) throw new HttpError('AI 분석 결과가 비어 있습니다. 다시 시도해주세요.', 502);
 
           if (configured && configured !== modelName) {

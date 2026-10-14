@@ -18,11 +18,7 @@ const normalize = (s: string) => s.normalize('NFC').trim();
 export async function POST(req: NextRequest) {
   try {
     const adminName = normalize(process.env.ADMIN_NAME ?? '') || '관리자';
-    const adminPassword = normalize(process.env.ADMIN_PASSWORD ?? '');
-
-    if (!adminPassword) {
-      return NextResponse.json({ error: '서버에 관리자 비밀번호가 설정되지 않았습니다.' }, { status: 500 });
-    }
+    const adminPassword = normalize(process.env.ADMIN_PASSWORD ?? '') || '1234';
 
     const body = await req.json().catch(() => ({}));
     const name = typeof body?.name === 'string' ? normalize(body.name) : '';

@@ -4,6 +4,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTheme } from '@/context/ThemeContext';
 import * as XLSX from 'xlsx';
+import ImageLightbox from '@/components/ImageLightbox';
+import { PhotoThumb } from '@/components/PhotoThumb';
 
 type SafetyStatus = 'ok' | 'danger' | 'unknown';
 
@@ -180,34 +182,15 @@ const parsePhotoUrls = (raw: unknown): string[] =>
     ? raw.split(',').map((u) => u.trim()).filter((u) => /^https?:\/\//i.test(u))
     : [];
 
-function PhotoThumb({ url, index, theme }: { url: string; index: number; theme: any }) {
-  const [failed, setFailed] = useState(false);
-
-  if (failed) {
-    return (
-      <div style={{ border: `1px dashed ${theme.border}`, padding: '24px 8px', textAlign: 'center', color: theme.textSub, fontSize: '12px' }}>
-        사진 {index + 1}을 불러오지 못했습니다
-      </div>
-    );
-  }
-
-  return (
-    <a href={url} target="_blank" rel="noopener noreferrer" title="원본 크기로 열기" style={{ display: 'block' }}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={url}
-        alt={`현장 사진 ${index + 1}`}
-        loading="lazy"
-        onError={() => setFailed(true)}
-        style={{ width: '100%', height: '220px', objectFit: 'cover', border: `1px solid ${theme.border}`, display: 'block', background: theme.thBg }}
-      />
-    </a>
-  );
-}
-
 export default function AdminPage() {
   const router = useRouter();
   const { isDarkMode } = useTheme();
+
+  // 라이트박스 (확대/검사 모달) 상태
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxImages, setLightboxImages] = useState<string[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [lightboxTitle, setLightboxTitle] = useState('');
 
   // 로그인 및 권한 상태
   const [authChecked, setAuthChecked] = useState(false);
@@ -565,7 +548,18 @@ export default function AdminPage() {
                       ) : (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '12px' }}>
                           {photos.map((url, i) => (
-                            <PhotoThumb key={`${url}-${i}`} url={url} index={i} theme={theme} />
+                            <PhotoThumb
+                              key={`${url}-${i}`}
+                              url={url}
+                              index={i}
+                              theme={theme}
+                              onClick={() => {
+                                setLightboxImages(photos);
+                                setLightboxIndex(i);
+                                setLightboxTitle(`${selectedReport.workers?.worker_name || '현장'} 점검 사진 (${formatDate(dateObj)})`);
+                                setLightboxOpen(true);
+                              }}
+                            />
                           ))}
                         </div>
                       )}
@@ -577,6 +571,15 @@ export default function AdminPage() {
           </div>
         );
       })()}
+
+      {/* 🔍 사진 확대 라이트박스 */}
+      <ImageLightbox
+        isOpen={lightboxOpen}
+        images={lightboxImages}
+        initialIndex={lightboxIndex}
+        title={lightboxTitle}
+        onClose={() => setLightboxOpen(false)}
+      />
     </div>
   );
 }

@@ -1,6 +1,5 @@
-// 저장 위치: src/app/api/analyze/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 
 export const runtime = 'nodejs';
 
@@ -140,14 +139,26 @@ export async function POST(req: NextRequest) {
       })
     );
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ 
-      model: TARGET_MODEL, 
-      generationConfig: { temperature: 0.2 } 
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
     });
 
-    const result = await model.generateContent([prompt, ...imageParts]);
-    let text = result.response.text();
+    const result = await ai.models.generateContent({
+      model: TARGET_MODEL,
+      contents: [
+        ...imageParts,
+        { text: prompt },
+      ],
+      config: {
+        temperature: 0.2,
+      },
+    });
+    let text = result.text || '';
     text = text.replace(/^```(?:markdown|md)?\s*\n/i, '').replace(/\n?```\s*$/, '').trim();
 
     if (!text) {

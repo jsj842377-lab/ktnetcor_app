@@ -19,6 +19,8 @@ import {
   parseCheckRows,
   parseSummary,
 } from '@/utils/reportMarkdown';
+import ImageLightbox from '@/components/ImageLightbox';
+import { PhotoThumb } from '@/components/PhotoThumb';
 
 const ALLOWED_WORKERS = ['전현진', '김관희', '김용', '박상원', '박용화', '박현지', '안주형', '윤성우', '임동균', '김명현'];
 
@@ -165,6 +167,12 @@ function DashboardContent() {
 
   const [printItem, setPrintItem] = useState<any>(null);
   const reportRef = useRef<HTMLDivElement>(null);
+
+  // 라이트박스 (사진 상세 확대/검사) 상태
+  const [lightboxOpen, setLightboxOpen] = useState<boolean>(false);
+  const [lightboxImages, setLightboxImages] = useState<string[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState<number>(0);
+  const [lightboxTitle, setLightboxTitle] = useState<string>('');
 
   const theme = isDarkMode ? {
     bg: '#0f172a', cardBg: '#1e293b', textMain: '#f8fafc', textSub: '#94a3b8',
@@ -744,8 +752,59 @@ function DashboardContent() {
           <input type="file" accept="image/*" multiple onChange={handleFileChange} style={{ display: 'none' }} />
         </label>
         {previewUrls.length > 0 && (
-          <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '10px 0' }}>
-            {previewUrls.map((url, i) => (<div key={i} style={{ position: 'relative' }}><img src={url} alt="미리보기" style={{ width: '80px', height: '80px', borderRadius: '0', objectFit: 'cover' }} />{files.length > 0 && <button onClick={() => removeFile(i)} style={{ position: 'absolute', top: 0, right: 0, background: 'black', color: 'white', border: 'none' }}>X</button>}</div>))}
+          <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', padding: '10px 0' }}>
+            {previewUrls.map((url, i) => (
+              <div key={i} style={{ position: 'relative', width: '80px', height: '80px', flexShrink: 0 }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={url}
+                  alt="미리보기"
+                  onClick={() => {
+                    setLightboxImages(previewUrls);
+                    setLightboxIndex(i);
+                    setLightboxTitle('업로드 사진 미리보기');
+                    setLightboxOpen(true);
+                  }}
+                  title="클릭하여 확대 검사"
+                  style={{
+                    width: '80px',
+                    height: '80px',
+                    borderRadius: '4px',
+                    objectFit: 'cover',
+                    cursor: 'zoom-in',
+                    border: `1px solid ${theme.border}`,
+                    display: 'block',
+                  }}
+                />
+                {files.length > 0 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeFile(i);
+                    }}
+                    title="사진 삭제"
+                    style={{
+                      position: 'absolute',
+                      top: '2px',
+                      right: '2px',
+                      background: 'rgba(0,0,0,0.75)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '50%',
+                      width: '20px',
+                      height: '20px',
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -800,9 +859,29 @@ function DashboardContent() {
                 </h2>
                 <ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
                 {previewUrls.length > 0 && (
-                  <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '20px 0 10px 0', color: theme.textMain }}>📸 현장 사진 (첨부)</h4>
-                    {previewUrls.map((url, i) => (<img key={i} src={url} alt="첨부사진" className="avoid-break" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '0', border: `1px solid ${theme.border}` }} />))}
+                  <div style={{ marginTop: '20px' }}>
+                    <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '20px 0 12px 0', color: theme.textMain, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>📸 현장 사진 (첨부 {previewUrls.length}장)</span>
+                      <span style={{ fontSize: '12px', color: theme.textSub, fontWeight: 'normal' }}>클릭하여 사진 확대 및 상세 검사</span>
+                    </h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
+                      {previewUrls.map((url, i) => (
+                        <PhotoThumb
+                          key={i}
+                          url={url}
+                          index={i}
+                          theme={theme}
+                          height="200px"
+                          className="avoid-break"
+                          onClick={() => {
+                            setLightboxImages(previewUrls);
+                            setLightboxIndex(i);
+                            setLightboxTitle(`${todayStr} 현장 안전점검 첨부 사진`);
+                            setLightboxOpen(true);
+                          }}
+                        />
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -859,8 +938,27 @@ function DashboardContent() {
                       <div style={{ background: theme.bg, padding: '16px', borderRadius: '0' }}><ReactMarkdown components={mdComps} remarkPlugins={[remarkGfm]}>{item.ai_report_text || ''}</ReactMarkdown></div>
                       {savedUrls.length > 0 && (
                         <div style={{ marginTop: '20px' }}>
-                          <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '0 0 16px 0', color: theme.textMain }}>📸 첨부된 현장 사진</h4>
-                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>{savedUrls.map((u: string, idx: number) => (<img key={idx} src={u} alt="사진" style={{ width: '48%', maxHeight: '300px', objectFit: 'contain', borderRadius: '0', border: `1px solid ${theme.border}` }} />))}</div>
+                          <h4 style={{ width: '100%', borderBottom: `1px solid ${theme.border}`, paddingBottom: '8px', margin: '0 0 14px 0', color: theme.textMain, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span>📸 첨부된 현장 사진 ({savedUrls.length}장)</span>
+                            <span style={{ fontSize: '12px', color: theme.textSub, fontWeight: 'normal' }}>클릭하여 사진 확대 및 상세 검사</span>
+                          </h4>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
+                            {savedUrls.map((u: string, idx: number) => (
+                              <PhotoThumb
+                                key={idx}
+                                url={u}
+                                index={idx}
+                                theme={theme}
+                                height="200px"
+                                onClick={() => {
+                                  setLightboxImages(savedUrls);
+                                  setLightboxIndex(idx);
+                                  setLightboxTitle(`${reportDate} 현장 안전점검 사진`);
+                                  setLightboxOpen(true);
+                                }}
+                              />
+                            ))}
+                          </div>
                         </div>
                       )}
 
@@ -907,6 +1005,15 @@ function DashboardContent() {
           </div>
         );
       })()}
+
+      {/* 🔍 사진 확대 및 정밀 검사 라이트박스 */}
+      <ImageLightbox
+        isOpen={lightboxOpen}
+        images={lightboxImages}
+        initialIndex={lightboxIndex}
+        title={lightboxTitle}
+        onClose={() => setLightboxOpen(false)}
+      />
     </div>
   );
 }
