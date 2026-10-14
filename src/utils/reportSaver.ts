@@ -51,7 +51,7 @@ export function saveReportAsHtml(
     h2 { font-size: 18px; margin: 0 0 10px 0; border-bottom: 2px solid #0f172a; padding-bottom: 6px; }
     h3 { font-size: 15px; margin: 10px 0 6px 0; }
     h4 { font-size: 12px; margin: 8px 0 4px 0; color: #1e293b; }
-    img { max-width: 100%; border-radius: 4px; }
+    img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; display: block; margin: 0 auto; }
   </style>
 </head>
 <body>

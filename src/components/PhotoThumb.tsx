@@ -18,6 +18,7 @@ interface PhotoThumbProps {
   className?: string;
   alt?: string;
   height?: string | number;
+  fitMode?: 'contain' | 'cover';
 }
 
 export function PhotoThumb({
@@ -29,6 +30,7 @@ export function PhotoThumb({
   className,
   alt,
   height = '220px',
+  fitMode = 'contain',
 }: PhotoThumbProps) {
   const [failed, setFailed] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
@@ -80,7 +82,9 @@ export function PhotoThumb({
       title="클릭하여 고화질 확대 및 상세 점검"
       style={{
         position: 'relative',
-        display: 'block',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         cursor: 'zoom-in',
         overflow: 'hidden',
         border: `1px solid ${isHovered ? '#3b82f6' : borderColor}`,
@@ -89,6 +93,7 @@ export function PhotoThumb({
         transition: 'all 0.2s ease',
         transform: isHovered ? 'translateY(-2px)' : 'none',
         boxShadow: isHovered ? '0 6px 14px rgba(0,0,0,0.15)' : 'none',
+        height: typeof height === 'number' ? `${height}px` : height,
         ...style,
       }}
       className={className}
@@ -100,12 +105,15 @@ export function PhotoThumb({
         loading="lazy"
         onError={() => setFailed(true)}
         style={{
-          width: '100%',
-          height: typeof height === 'number' ? `${height}px` : height,
-          objectFit: 'cover',
+          maxWidth: '100%',
+          maxHeight: '100%',
+          width: fitMode === 'cover' ? '100%' : 'auto',
+          height: fitMode === 'cover' ? '100%' : 'auto',
+          objectFit: fitMode,
           display: 'block',
+          margin: '0 auto',
           transition: 'transform 0.25s ease',
-          transform: isHovered ? 'scale(1.04)' : 'scale(1)',
+          transform: isHovered ? 'scale(1.03)' : 'scale(1)',
         }}
       />
 

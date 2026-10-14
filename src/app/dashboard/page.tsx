@@ -22,8 +22,7 @@ import {
 import ImageLightbox from '@/components/ImageLightbox';
 import { PhotoThumb } from '@/components/PhotoThumb';
 import OnePageReport from '@/components/OnePageReport';
-import EmailModal from '@/components/EmailModal';
-import { saveReportAsMarkdown, saveReportAsText, saveReportAsHtml } from '@/utils/reportSaver';
+import { saveReportAsText, saveReportAsHtml } from '@/utils/reportSaver';
 
 const ALLOWED_WORKERS = ['전현진', '김관희', '김용', '박상원', '박용화', '박현지', '안주형', '윤성우', '임동균', '김명현'];
 
@@ -176,12 +175,6 @@ function DashboardContent() {
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState<number>(0);
   const [lightboxTitle, setLightboxTitle] = useState<string>('');
-
-  // 이메일 전송 모달 상태
-  const [emailModalOpen, setEmailModalOpen] = useState<boolean>(false);
-  const [emailReportText, setEmailReportText] = useState<string>('');
-  const [emailPhotoUrls, setEmailPhotoUrls] = useState<string[]>([]);
-  const [emailDateStr, setEmailDateStr] = useState<string>('');
 
   // 저장 메뉴 상태 및 안내 알림
   const [showSaveMenu, setShowSaveMenu] = useState<boolean>(false);
@@ -468,22 +461,9 @@ function DashboardContent() {
     }, 150);
   };
 
-  const triggerEmailModal = (reportText: string, photos: string[], date: string) => {
-    setEmailReportText(reportText);
-    setEmailPhotoUrls(photos);
-    setEmailDateStr(date);
-    setEmailModalOpen(true);
-  };
-
   const showToast = (msg: string) => {
     setSaveToast(msg);
     setTimeout(() => setSaveToast(null), 3000);
-  };
-
-  const handleSaveAsMarkdown = (reportText: string, date: string) => {
-    saveReportAsMarkdown(reportText, `현장안전점검보고서_${date}_${workerName}.md`);
-    showToast('마크다운(.md) 파일로 저장되었습니다.');
-    setShowSaveMenu(false);
   };
 
   const handleSaveAsText = (reportText: string, date: string) => {
@@ -744,9 +724,13 @@ function DashboardContent() {
             margin: 0 auto !important;
             box-sizing: border-box !important;
             page-break-inside: avoid !important;
-            break-inside: avoid !important;
             page-break-after: avoid !important;
             break-after: avoid !important;
+          }
+          .print-area-1page img {
+            max-width: 100% !important;
+            max-height: 100% !important;
+            object-fit: contain !important;
           }
           .no-print {
             display: none !important;
@@ -846,7 +830,23 @@ function DashboardContent() {
         {previewUrls.length > 0 && (
           <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', padding: '10px 0' }}>
             {previewUrls.map((url, i) => (
-              <div key={i} style={{ position: 'relative', width: '80px', height: '80px', flexShrink: 0 }}>
+              <div
+                key={i}
+                style={{
+                  position: 'relative',
+                  width: '84px',
+                  height: '84px',
+                  flexShrink: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: theme.cardBg,
+                  borderRadius: '4px',
+                  border: `1px solid ${theme.border}`,
+                  overflow: 'hidden',
+                  padding: '2px',
+                }}
+              >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={url}
@@ -859,13 +859,14 @@ function DashboardContent() {
                   }}
                   title="클릭하여 확대 검사"
                   style={{
-                    width: '80px',
-                    height: '80px',
-                    borderRadius: '4px',
-                    objectFit: 'cover',
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    width: 'auto',
+                    height: 'auto',
+                    objectFit: 'contain',
                     cursor: 'zoom-in',
-                    border: `1px solid ${theme.border}`,
                     display: 'block',
+                    margin: 'auto',
                   }}
                 />
                 {files.length > 0 && (
@@ -982,30 +983,8 @@ function DashboardContent() {
                   ✏️ 조치사항 수정
                 </button>
 
-                {/* 이메일 전송 버튼 */}
-                <button
-                  onClick={() => triggerEmailModal(report, previewUrls, todayStr)}
-                  style={{
-                    flex: '1.2 1 130px',
-                    padding: '12px',
-                    background: '#0284c7',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontWeight: 'bold',
-                    fontSize: '13px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '6px',
-                  }}
-                >
-                  ✉️ 메일로 전송
-                </button>
-
                 {/* 파일 저장 드롭다운 메뉴 토글 버튼 */}
-                <div style={{ position: 'relative', flex: '1.2 1 130px' }}>
+                <div style={{ position: 'relative', flex: '1.2 1 140px' }}>
                   <button
                     onClick={() => setShowSaveMenu(!showSaveMenu)}
                     style={{
@@ -1046,24 +1025,6 @@ function DashboardContent() {
                         flexDirection: 'column',
                       }}
                     >
-                      <button
-                        onClick={() => handleSaveAsMarkdown(report, todayStr)}
-                        style={{
-                          padding: '10px 14px',
-                          border: 'none',
-                          borderBottom: `1px solid ${theme.border}`,
-                          background: 'transparent',
-                          color: theme.textMain,
-                          textAlign: 'left',
-                          fontSize: '12px',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                        }}
-                      >
-                        📄 마크다운 (.md) 저장
-                      </button>
                       <button
                         onClick={() => handleSaveAsText(report, todayStr)}
                         style={{
@@ -1213,29 +1174,9 @@ function DashboardContent() {
                         ) : (
                           <>
                             <button
-                              onClick={() => triggerEmailModal(item.ai_report_text || '', savedUrls, reportDate)}
+                              onClick={() => handleSaveAsText(item.ai_report_text || '', reportDate)}
                               style={{
-                                flex: '1 1 110px',
-                                padding: '10px 12px',
-                                background: '#0284c7',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer',
-                                fontWeight: 'bold',
-                                fontSize: '12px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '4px',
-                              }}
-                            >
-                              ✉️ 메일 전송
-                            </button>
-                            <button
-                              onClick={() => handleSaveAsMarkdown(item.ai_report_text || '', reportDate)}
-                              style={{
-                                flex: '0.9 1 90px',
+                                flex: '1 1 95px',
                                 padding: '10px 12px',
                                 background: '#4f46e5',
                                 color: 'white',
@@ -1250,7 +1191,7 @@ function DashboardContent() {
                                 gap: '4px',
                               }}
                             >
-                              💾 .md 저장
+                              📝 .txt 저장
                             </button>
                             <button onClick={() => handlePrintPastReport(item)} style={{ flex: '1 1 90px', padding: '10px 12px', background: theme.btnCancel, color: theme.textMain, border: `1px solid ${theme.border}`, borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>🖨️ 1장 인쇄</button>
                             <button onClick={() => handleDownloadPastPDF(item)} style={{ flex: '1.2 1 110px', padding: '10px 12px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>📥 1장 PDF 다운로드</button>
@@ -1295,15 +1236,7 @@ function DashboardContent() {
         onClose={() => setLightboxOpen(false)}
       />
 
-      {/* ✉️ 안전점검 보고서 이메일 전송 모달 */}
-      <EmailModal
-        isOpen={emailModalOpen}
-        onClose={() => setEmailModalOpen(false)}
-        reportMarkdown={emailReportText}
-        photoUrls={emailPhotoUrls}
-        workerName={workerName}
-        dateStr={emailDateStr}
-      />
+
 
       {/* 💾 파일 저장 완료 안내 토스트 */}
       {saveToast && (

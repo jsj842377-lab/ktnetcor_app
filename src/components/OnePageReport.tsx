@@ -130,14 +130,15 @@ export default function OnePageReport({
   const photoCount = photoUrls.length;
 
   const getPhotoHeight = () => {
-    if (photoCount <= 2) return '130px';
-    if (photoCount === 3) return '115px';
-    if (photoCount === 4) return '100px';
-    return '90px'; // 5장
+    if (photoCount === 1) return '150px';
+    if (photoCount === 2) return '135px';
+    if (photoCount === 3) return '120px';
+    if (photoCount === 4) return '105px';
+    return '95px'; // 5장
   };
 
   const getGridTemplate = () => {
-    if (photoCount === 1) return 'minmax(0, 320px)';
+    if (photoCount === 1) return 'minmax(0, 360px)';
     if (photoCount === 2) return 'repeat(2, minmax(0, 1fr))';
     if (photoCount === 3) return 'repeat(3, minmax(0, 1fr))';
     if (photoCount === 4) return 'repeat(4, minmax(0, 1fr))';
@@ -232,8 +233,23 @@ export default function OnePageReport({
               marginBottom: '8px',
             }}
           >
-            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#1e293b' }}>
-              📸 현장 증빙 사진 (총 {photoCount}장)
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#1e293b' }}>
+                📸 현장 증빙 사진 (총 {photoCount}장)
+              </div>
+              <span
+                style={{
+                  fontSize: '10px',
+                  color: '#059669',
+                  background: '#ecfdf5',
+                  border: '1px solid #a7f3d0',
+                  padding: '1px 6px',
+                  borderRadius: '3px',
+                  fontWeight: '600',
+                }}
+              >
+                전체 사진 원본 비율 유지 · 잘림 방지
+              </span>
             </div>
             {!isPrintVersion && (
               <span style={{ fontSize: '11px', color: '#64748b' }}>
@@ -257,7 +273,7 @@ export default function OnePageReport({
                 style={{
                   position: 'relative',
                   border: '1px solid #cbd5e1',
-                  borderRadius: '3px',
+                  borderRadius: '4px',
                   overflow: 'hidden',
                   background: '#f8fafc',
                   cursor: onPhotoClick ? 'zoom-in' : 'default',
@@ -265,6 +281,8 @@ export default function OnePageReport({
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
+                  padding: '2px',
+                  boxSizing: 'border-box',
                 }}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -273,10 +291,13 @@ export default function OnePageReport({
                   crossOrigin="anonymous"
                   alt={`현장 사진 ${idx + 1}`}
                   style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    width: 'auto',
+                    height: 'auto',
+                    objectFit: 'contain',
                     display: 'block',
+                    margin: '0 auto',
                   }}
                 />
 
@@ -293,6 +314,7 @@ export default function OnePageReport({
                     borderRadius: '2px',
                     fontWeight: 'bold',
                     pointerEvents: 'none',
+                    backdropFilter: 'blur(2px)',
                   }}
                 >
                   사진 {idx + 1}
@@ -306,9 +328,9 @@ export default function OnePageReport({
                       position: 'absolute',
                       top: '3px',
                       left: '3px',
-                      background: 'rgba(0, 0, 0, 0.55)',
+                      background: 'rgba(15, 23, 42, 0.65)',
                       color: 'white',
-                      padding: '2px',
+                      padding: '2px 3px',
                       borderRadius: '2px',
                       display: 'flex',
                       alignItems: 'center',
