@@ -26,10 +26,16 @@ export default function OnePageReport({
   className = '',
   isPrintVersion = false,
 }: OnePageReportProps) {
-  // 1페이지 A4 규격에 맞춘 초슬림 마크다운 렌더러 컴포넌트
+  // 상단에 공식 헤더가 이미 출력되므로, 마크다운 본문 맨 앞의 중복 대제목을 깨끗이 제거하여 A4 1장 여백 확보
+  const cleanedReportText = (reportText || '')
+    .replace(/^#+\s*현장\s*안전점검\s*(?:결과)?보고서\s*\n+/i, '')
+    .replace(/^#+\s*안전점검\s*(?:결과)?보고서\s*\n+/i, '')
+    .trim();
+
+  // A4 1페이지 규격에 엄격히 맞춘 초슬림 마크다운 렌더러 컴포넌트
   const compactMdComps = {
     table: (props: any) => (
-      <div style={{ width: '100%', overflow: 'hidden', marginBottom: '8px' }}>
+      <div style={{ width: '100%', overflow: 'hidden', marginBottom: '4px' }}>
         <table
           style={{
             width: '100%',
@@ -47,12 +53,12 @@ export default function OnePageReport({
         style={{
           border: '1px solid #cbd5e1',
           background: '#f1f5f9',
-          padding: '4px 6px',
+          padding: '3px 4px',
           textAlign: 'center',
-          fontSize: '11px',
+          fontSize: '10px',
           fontWeight: 'bold',
           color: '#0f172a',
-          lineHeight: 1.25,
+          lineHeight: 1.2,
           wordBreak: 'keep-all',
         }}
         {...props}
@@ -77,8 +83,8 @@ export default function OnePageReport({
         <td
           style={{
             border: '1px solid #cbd5e1',
-            padding: '4px 6px',
-            fontSize: '11px',
+            padding: '2.5px 5px',
+            fontSize: '9.5px',
             textAlign: isGood || isBad ? 'center' : 'left',
             color: cellColor,
             fontWeight: cellFontWeight,
@@ -91,28 +97,35 @@ export default function OnePageReport({
         </td>
       );
     },
-    h3: (props: any) => (
-      <h3
-        style={{
-          fontSize: '17px',
-          fontWeight: 'bold',
-          color: '#0f172a',
-          margin: '0 0 10px 0',
-          paddingBottom: '6px',
-          borderBottom: '2px solid #0f172a',
-          textAlign: 'center',
-          letterSpacing: '-0.5px',
-        }}
-        {...props}
-      />
-    ),
+    h3: ({ children, ...props }: any) => {
+      const text = typeof children === 'string' ? children : '';
+      // 중복된 상단 메인 제목은 렌더링 생략
+      if ((text.includes('현장') || text.includes('안전점검')) && text.includes('보고서')) return null;
+      return (
+        <h3
+          style={{
+            fontSize: '14px',
+            fontWeight: 'bold',
+            color: '#0f172a',
+            margin: '0 0 4px 0',
+            paddingBottom: '3px',
+            borderBottom: '1.5px solid #0f172a',
+            textAlign: 'center',
+            letterSpacing: '-0.3px',
+          }}
+          {...props}
+        >
+          {children}
+        </h3>
+      );
+    },
     h4: (props: any) => (
       <div
         style={{
-          fontSize: '12px',
+          fontSize: '10.5px',
           fontWeight: 'bold',
           color: '#1e293b',
-          margin: '8px 0 4px 0',
+          margin: '4px 0 2px 0',
           display: 'flex',
           alignItems: 'center',
           gap: '4px',
@@ -121,24 +134,25 @@ export default function OnePageReport({
       />
     ),
     p: (props: any) => (
-      <p style={{ margin: '2px 0', fontSize: '11px', color: '#0f172a', lineHeight: 1.3 }} {...props} />
+      <p style={{ margin: '1px 0', fontSize: '9.5px', color: '#0f172a', lineHeight: 1.25 }} {...props} />
     ),
     strong: (props: any) => <strong style={{ color: '#0f172a', fontWeight: 'bold' }} {...props} />,
   };
 
-  // 사진 개수에 따른 1페이지 최적화 배치 그리드
-  const photoCount = photoUrls.length;
+  // 사진 개수에 따른 A4 1페이지 최적화 배치 그리드 및 높이 설정 (A4 1장에 수납되도록 최대 5장 슬라이스)
+  const displayPhotos = photoUrls.slice(0, 5);
+  const photoCount = displayPhotos.length;
 
   const getPhotoHeight = () => {
-    if (photoCount === 1) return '150px';
-    if (photoCount === 2) return '135px';
-    if (photoCount === 3) return '120px';
-    if (photoCount === 4) return '105px';
-    return '95px'; // 5장
+    if (photoCount === 1) return isPrintVersion ? '120px' : '130px';
+    if (photoCount === 2) return isPrintVersion ? '105px' : '115px';
+    if (photoCount === 3) return isPrintVersion ? '95px' : '100px';
+    if (photoCount === 4) return isPrintVersion ? '85px' : '90px';
+    return isPrintVersion ? '78px' : '82px'; // 5장
   };
 
   const getGridTemplate = () => {
-    if (photoCount === 1) return 'minmax(0, 360px)';
+    if (photoCount === 1) return 'minmax(0, 340px)';
     if (photoCount === 2) return 'repeat(2, minmax(0, 1fr))';
     if (photoCount === 3) return 'repeat(3, minmax(0, 1fr))';
     if (photoCount === 4) return 'repeat(4, minmax(0, 1fr))';
@@ -158,12 +172,14 @@ export default function OnePageReport({
         width: '100%',
         maxWidth: '740px',
         margin: '0 auto',
-        padding: isPrintVersion ? '16px 20px' : '20px 24px',
+        padding: isPrintVersion ? '12px 16px' : '16px 20px',
         boxSizing: 'border-box',
         fontFamily: "'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         border: isPrintVersion ? 'none' : '1px solid #cbd5e1',
-        borderRadius: isPrintVersion ? '0' : '6px',
-        boxShadow: isPrintVersion ? 'none' : '0 4px 12px rgba(0,0,0,0.06)',
+        borderRadius: isPrintVersion ? '0' : '4px',
+        boxShadow: isPrintVersion ? 'none' : '0 2px 8px rgba(0,0,0,0.05)',
+        pageBreakInside: 'avoid',
+        breakInside: 'avoid',
       }}
     >
       {/* 상단 공식 헤더 */}
@@ -172,19 +188,19 @@ export default function OnePageReport({
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'flex-end',
-          borderBottom: '2.5px solid #0f172a',
-          paddingBottom: '8px',
-          marginBottom: '10px',
+          borderBottom: '2px solid #0f172a',
+          paddingBottom: '5px',
+          marginBottom: '6px',
         }}
       >
         <div>
           <span
             style={{
-              fontSize: '10.5px',
+              fontSize: '9.5px',
               fontWeight: 'bold',
               color: '#2563eb',
               display: 'inline-block',
-              marginBottom: '2px',
+              marginBottom: '1px',
               letterSpacing: '0.5px',
             }}
           >
@@ -193,17 +209,18 @@ export default function OnePageReport({
           <h2
             style={{
               margin: 0,
-              fontSize: '18px',
+              fontSize: '16px',
               fontWeight: 800,
               color: '#0f172a',
               letterSpacing: '-0.5px',
+              lineHeight: 1.15,
             }}
           >
             현장 안전점검 결과보고서
           </h2>
         </div>
 
-        <div style={{ textAlign: 'right', fontSize: '11px', color: '#475569', lineHeight: 1.4 }}>
+        <div style={{ textAlign: 'right', fontSize: '9.5px', color: '#475569', lineHeight: 1.3 }}>
           <div>
             <strong>점검일:</strong> {dateStr}
           </div>
@@ -216,44 +233,44 @@ export default function OnePageReport({
       {/* 보고서 마크다운 표 영역 (1페이지 맞춤 초슬림 렌더러) */}
       <div className="report-markdown-body" style={{ color: '#0f172a' }}>
         <ReactMarkdown components={compactMdComps} remarkPlugins={[remarkGfm]}>
-          {reportText}
+          {cleanedReportText}
         </ReactMarkdown>
       </div>
 
-      {/* ■ 4. 현장 사진 (첨부) 영역 - 1페이지 맞춤 고정형 슬림 그리드 */}
+      {/* ■ 4. 현장 사진 (첨부) 영역 - A4 1페이지 맞춤 고정형 슬림 그리드 */}
       {photoCount > 0 && (
-        <div style={{ marginTop: '10px', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+        <div style={{ marginTop: '6px', pageBreakInside: 'avoid', breakInside: 'avoid' }}>
           <div
             style={{
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
               borderBottom: '1px solid #cbd5e1',
-              paddingBottom: '4px',
-              marginBottom: '8px',
+              paddingBottom: '3px',
+              marginBottom: '5px',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-              <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#1e293b' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#1e293b' }}>
                 📸 현장 증빙 사진 (총 {photoCount}장)
               </div>
               <span
                 style={{
-                  fontSize: '10px',
+                  fontSize: '9px',
                   color: '#059669',
                   background: '#ecfdf5',
                   border: '1px solid #a7f3d0',
-                  padding: '1px 6px',
-                  borderRadius: '3px',
+                  padding: '1px 5px',
+                  borderRadius: '2px',
                   fontWeight: '600',
                 }}
               >
-                전체 사진 원본 비율 유지 · 잘림 방지
+                A4 1장 최적화 · 원본비율 보존
               </span>
             </div>
-            {!isPrintVersion && (
-              <span style={{ fontSize: '11px', color: '#64748b' }}>
-                사진을 클릭하면 원본 고화질로 확대 검사할 수 있습니다
+            {!isPrintVersion && onPhotoClick && (
+              <span style={{ fontSize: '9.5px', color: '#64748b' }}>
+                클릭 시 원본 고화질 확대
               </span>
             )}
           </div>
@@ -262,18 +279,18 @@ export default function OnePageReport({
             style={{
               display: 'grid',
               gridTemplateColumns: gridTemplate,
-              gap: '8px',
+              gap: '6px',
               justifyContent: photoCount === 1 ? 'center' : 'stretch',
             }}
           >
-            {photoUrls.map((url, idx) => (
+            {displayPhotos.map((url, idx) => (
               <div
                 key={`${url}-${idx}`}
                 onClick={() => onPhotoClick?.(idx)}
                 style={{
                   position: 'relative',
                   border: '1px solid #cbd5e1',
-                  borderRadius: '4px',
+                  borderRadius: '3px',
                   overflow: 'hidden',
                   background: '#f8fafc',
                   cursor: onPhotoClick ? 'zoom-in' : 'default',
@@ -305,12 +322,12 @@ export default function OnePageReport({
                 <div
                   style={{
                     position: 'absolute',
-                    bottom: '3px',
-                    right: '3px',
+                    bottom: '2px',
+                    right: '2px',
                     background: 'rgba(15, 23, 42, 0.75)',
                     color: '#ffffff',
-                    fontSize: '9.5px',
-                    padding: '1px 5px',
+                    fontSize: '8.5px',
+                    padding: '1px 4px',
                     borderRadius: '2px',
                     fontWeight: 'bold',
                     pointerEvents: 'none',
@@ -326,11 +343,11 @@ export default function OnePageReport({
                     className="photo-hover-badge"
                     style={{
                       position: 'absolute',
-                      top: '3px',
-                      left: '3px',
+                      top: '2px',
+                      left: '2px',
                       background: 'rgba(15, 23, 42, 0.65)',
                       color: 'white',
-                      padding: '2px 3px',
+                      padding: '2px',
                       borderRadius: '2px',
                       display: 'flex',
                       alignItems: 'center',
@@ -338,7 +355,7 @@ export default function OnePageReport({
                       pointerEvents: 'none',
                     }}
                   >
-                    <ZoomIn size={12} />
+                    <ZoomIn size={10} />
                   </div>
                 )}
               </div>
@@ -350,13 +367,13 @@ export default function OnePageReport({
       {/* 하단 점검 승인 및 서명란 (공식 양식 마감) */}
       <div
         style={{
-          marginTop: '12px',
-          paddingTop: '8px',
+          marginTop: '6px',
+          paddingTop: '4px',
           borderTop: '1px dashed #cbd5e1',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          fontSize: '10px',
+          fontSize: '9px',
           color: '#64748b',
         }}
       >

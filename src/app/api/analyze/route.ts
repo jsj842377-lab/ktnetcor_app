@@ -51,7 +51,7 @@ async function resolveLocationToKoreanAddress(rawLocation: string): Promise<stri
       // 중복 단어 제거 (예: 시/도와 시/군/구가 중복될 경우)
       const uniqueParts = parts.filter((item, idx) => parts.indexOf(item) === idx);
       if (uniqueParts.length >= 2) {
-        return uniqueParts.join(' ');
+        return `${uniqueParts.join(' ')} (${lat}, ${lon})`;
       }
     }
 
@@ -63,7 +63,7 @@ async function resolveLocationToKoreanAddress(rawLocation: string): Promise<stri
         .filter((s: string) => s !== '대한민국' && s !== 'South Korea' && !/^\d{5}$/.test(s))
         .reverse()
         .join(' ');
-      if (reversedAddress) return reversedAddress;
+      if (reversedAddress) return `${reversedAddress} (${lat}, ${lon})`;
     }
 
     return trimmed;

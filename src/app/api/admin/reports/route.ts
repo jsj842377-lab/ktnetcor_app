@@ -28,25 +28,38 @@ export async function GET(req: NextRequest) {
     // 한국 시간(KST) 기준 연도 범위
     const from = `${year}-01-01T00:00:00+09:00`;
     const to = `${year + 1}-01-01T00:00:00+09:00`;
+    const typeParam = req.nextUrl.searchParams.get('type') || 'safety';
+    const tableName = typeParam === 'material' ? 'material_inspections' : 'inspections';
 
     const supabase = createClient(url, serviceKey, { auth: { persistSession: false } });
 
     const reports: any[] = [];
-    for (let start = 0; ; start += PAGE_SIZE) {
-      const { data, error } = await supabase
-        .from('inspections')
-        .select('id, created_at, ai_report_text, image_url, workers ( worker_name )')
-        .gte('created_at', from)
-        .lt('created_at', to)
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: false })
-        .range(start, start + PAGE_SIZE - 1);
+    try {
+      for (let start = 0; ; start += PAGE_SIZE) {
+        const query = supabase
+          .from(tableName)
+          .select(
+            tableName === 'material_inspections'
+              ? 'id, created_at, ai_report_text, image_url, project_number, material_type, status, workers ( worker_name )'
+              : 'id, created_at, ai_report_text, image_url, workers ( worker_name )'
+          )
+          .gte('created_at', from)
+          .lt('created_at', to)
+          .order('created_at', { ascending: false })
+          .range(start, start + PAGE_SIZE - 1);
 
-      if (error) throw error;
-      if (!data || data.length === 0) break;
+        const { data, error } = await query;
+        if (error) {
+          console.warn(`Query on ${tableName} error:`, error.message);
+          break;
+        }
+        if (!data || data.length === 0) break;
 
-      reports.push(...data);
-      if (data.length < PAGE_SIZE) break;
+        reports.push(...data);
+        if (data.length < PAGE_SIZE) break;
+      }
+    } catch (e: any) {
+      console.warn(`Error querying ${tableName}:`, e?.message);
     }
 
     return NextResponse.json({ reports });

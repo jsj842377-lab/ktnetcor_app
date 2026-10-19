@@ -7,6 +7,11 @@ import * as XLSX from 'xlsx';
 import ImageLightbox from '@/components/ImageLightbox';
 import { PhotoThumb } from '@/components/PhotoThumb';
 import { saveReportAsText } from '@/utils/reportSaver';
+import OnePageReport from '@/components/OnePageReport';
+import {
+  extractMaterialInfoFromMarkdown,
+  exportMaterialInspectionExcel,
+} from '@/utils/materialReportMarkdown';
 
 type SafetyStatus = 'ok' | 'danger' | 'unknown';
 
@@ -202,9 +207,13 @@ export default function AdminPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [adminName, setAdminName] = useState('');
   const [adminPwd, setAdminPwd] = useState('');
+  const [currentWorker, setCurrentWorker] = useState<string | null>(null);
+  const [showAdminLoginForm, setShowAdminLoginForm] = useState<boolean>(false);
 
   // 데이터 상태
+  const [activeCategory, setActiveCategory] = useState<'safety' | 'material'>('safety');
   const [allReports, setAllReports] = useState<any[]>([]);
+  const [materialReports, setMaterialReports] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -239,11 +248,35 @@ export default function AdminPage() {
       if (!res.ok) throw new Error(json.error || `서버 오류 (${res.status})`);
 
       setAllReports(json.reports ?? []);
+
+      // 자재실사 기록도 함께 로드 (서버 API + 브라우저 로컬 저장소 병합)
+      try {
+        const matRes = await fetch(`/api/admin/reports?year=${year}&type=material`, { cache: 'no-store' });
+        const matJson = await matRes.json().catch(() => ({}));
+        const serverMat = matJson.reports ?? [];
+
+        let localMat: any[] = [];
+        if (typeof window !== 'undefined') {
+          const saved = localStorage.getItem('kt_material_inspections');
+          if (saved) localMat = JSON.parse(saved);
+        }
+
+        const idSet = new Set(serverMat.map((m: any) => m.id));
+        const combined = [...serverMat];
+        for (const item of localMat) {
+          if (!idSet.has(item.id)) {
+            combined.push(item);
+          }
+        }
+        setMaterialReports(combined);
+      } catch (matErr) {
+        console.warn('자재실사 목록 로드 경고:', matErr);
+      }
+
       setLoadError(null);
       setIsAuthorized(true);
       return true;
     } catch (err: any) {
-      // 로그인 상태는 유지하고, 대시보드 안에 오류를 표시합니다.
       if (!silent) setLoadError(err.message || '데이터를 불러오지 못했습니다.');
       return false;
     } finally {
@@ -251,8 +284,12 @@ export default function AdminPage() {
     }
   }, []);
 
-  // 새로고침 시 기존 로그인 세션(쿠키) 확인
+  // 새로고침 시 기존 로그인 세션(쿠키) 및 현재 작업자 확인
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedWorker = localStorage.getItem('kt_current_worker');
+      setCurrentWorker(savedWorker);
+    }
     loadReports(currentYear.toString(), true).finally(() => setAuthChecked(true));
   }, [loadReports, currentYear]);
 
@@ -298,7 +335,7 @@ export default function AdminPage() {
       }
       setAdminPwd('');
       setLoadError(null);
-      setIsAuthorized(true); // 로그인 성공 → 보고서 조회 결과와 상관없이 대시보드로 이동
+      setIsAuthorized(true);
       await loadReports(selectedYear);
     } catch {
       alert('서버와 통신하지 못했습니다. 잠시 후 다시 시도해주세요.');
@@ -311,6 +348,7 @@ export default function AdminPage() {
     await fetch('/api/admin/login', { method: 'DELETE' }).catch(() => {});
     setIsAuthorized(false);
     setAllReports([]);
+    setMaterialReports([]);
     setSelectedReport(null);
     setAdminName('');
     setAdminPwd('');
@@ -321,7 +359,7 @@ export default function AdminPage() {
     loadReports(year);
   };
 
-  // 분기 / 이름 필터 (연도는 서버에서 이미 필터링됨)
+  // 안전점검 분기 / 이름 필터
   const filteredReports = useMemo(() => {
     const keyword = searchName.trim();
     return allReports.filter((item) => {
@@ -331,8 +369,23 @@ export default function AdminPage() {
     });
   }, [allReports, selectedQuarter, searchName]);
 
-  const handleDownloadExcel = (reportType: '자재실사' | '안전점검') => {
-    if (filteredReports.length === 0) return alert('다운로드할 데이터가 없습니다.');
+  // 자재실사 분기 / 이름 필터
+  const filteredMaterialReports = useMemo(() => {
+    const keyword = searchName.trim();
+    return materialReports.filter((item) => {
+      const dateStr = item.created_at || item.photo_date || '';
+      if (selectedQuarter !== 'ALL' && dateStr && getQuarter(new Date(dateStr)) !== selectedQuarter) return false;
+      const worker = item.inspector || item.workers?.worker_name || '';
+      const mat = item.material_type || '';
+      const proj = item.project_number || '';
+      if (keyword && !worker.includes(keyword) && !mat.includes(keyword) && !proj.includes(keyword)) return false;
+      return true;
+    });
+  }, [materialReports, selectedQuarter, searchName]);
+
+  // 안전점검 엑셀 다운로드
+  const handleDownloadExcel = (reportType: '안전점검') => {
+    if (filteredReports.length === 0) return alert('다운로드할 안전점검 데이터가 없습니다.');
 
     const exportData = filteredReports.map((report) => {
       const { projNum, workType, status } = extractInfoFromMarkdown(report.ai_report_text);
@@ -358,6 +411,37 @@ export default function AdminPage() {
     XLSX.writeFile(workbook, fileName);
   };
 
+  // 자재실사 표준 엑셀 다운로드 (협력사관리_자재실사_2026년_Q4.xlsx 구조)
+  const handleDownloadMaterialExcel = () => {
+    if (filteredMaterialReports.length === 0) return alert('다운로드할 자재실사 데이터가 없습니다.');
+
+    const rows = filteredMaterialReports.map((report) => {
+      const dateObj = new Date(report.created_at || report.photo_date || new Date());
+      const info = extractMaterialInfoFromMarkdown(report.ai_report_text || '');
+      const period = dateObj.getHours() < 12 ? '오전' : '오후';
+      const inspectorName = report.inspector || report.workers?.worker_name || info.inspector || '전현진';
+      const projNum = report.project_number || info.projectNumber || '안산-설비-2026-0096';
+      const matType = report.material_type || info.materialType || 'FR-CNCO-W 22kV 60㎟';
+      const loc = report.photo_location || info.photoLocation || '안산 야외 적재장 A구역';
+      const result = report.overall_result || info.overallResultLabel;
+
+      return {
+        date: formatDate(dateObj),
+        period,
+        inspector: inspectorName,
+        partnerName: PARTNER_NAME,
+        projectNumber: projNum,
+        materialType: matType,
+        photoLocation: loc,
+        overallResult: result,
+      };
+    });
+
+    const nameStr = searchName.trim() ? `_${searchName.trim().replace(/[\\/:*?"<>|]/g, '')}` : '';
+    const fileName = `협력사관리_자재실사_${selectedYear}년_${selectedQuarter === 'ALL' ? '전체' : selectedQuarter}${nameStr}.xlsx`;
+    exportMaterialInspectionExcel(rows, fileName);
+  };
+
   // ⏳ 세션 확인 중
   if (!authChecked) {
     return (
@@ -367,8 +451,105 @@ export default function AdminPage() {
     );
   }
 
-  // 🔒 로그인 화면
+  // 🔒 로그인 및 권한 화면
   if (!isAuthorized) {
+    // 일반 직원으로 로그인되어 있는 경우: 접근 제한 안내 및 안전점검/자재실사 바로가기 안내
+    if (currentWorker && currentWorker !== '관리자' && !showAdminLoginForm) {
+      return (
+        <div style={{ minHeight: '100vh', background: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Pretendard', sans-serif", padding: '20px' }}>
+          <div style={{ background: theme.cardBg, padding: '36px 28px', borderRadius: '12px', border: `1px solid ${theme.border}`, width: '100%', maxWidth: '420px', boxShadow: '0 10px 25px rgba(0,0,0,0.08)', textAlign: 'center' }}>
+            <div style={{ fontSize: '46px', marginBottom: '12px' }}>🔒</div>
+            <h2 style={{ margin: '0 0 10px 0', fontSize: '20px', fontWeight: '800', color: theme.textMain }}>
+              일반 직원 접근 제한
+            </h2>
+            <p style={{ fontSize: '13.5px', color: theme.textSub, lineHeight: 1.6, margin: '0 0 22px 0' }}>
+              현재 <strong style={{ color: theme.textMain }}>{currentWorker}</strong>님(일반 직원 계정)으로 접속 중입니다.<br />
+              일반 직원은 <strong style={{ color: '#2563eb' }}>안전점검</strong> 및 <strong style={{ color: '#059669' }}>자재실사</strong> 페이지만 이용하실 수 있습니다.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
+              <button
+                type="button"
+                onClick={() => router.push(`/dashboard?worker=${encodeURIComponent(currentWorker)}`)}
+                style={{
+                  width: '100%',
+                  padding: '13px',
+                  background: '#2563eb',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '13.5px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  boxShadow: '0 2px 6px rgba(37,99,235,0.3)',
+                }}
+              >
+                <span>🛡️ 안전점검 시스템으로 이동</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => router.push(`/material-audit?worker=${encodeURIComponent(currentWorker)}`)}
+                style={{
+                  width: '100%',
+                  padding: '13px',
+                  background: '#059669',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '13.5px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  boxShadow: '0 2px 6px rgba(5,150,105,0.3)',
+                }}
+              >
+                <span>📦 자재실사 시스템으로 이동</span>
+              </button>
+            </div>
+
+            <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <button
+                type="button"
+                onClick={() => router.push('/')}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: theme.textSub,
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                }}
+              >
+                메인으로 이동
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAdminLoginForm(true)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#2563eb',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                }}
+              >
+                관리자 계정으로 전환 →
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div style={{ minHeight: '100vh', background: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Pretendard', sans-serif" }}>
         <form onSubmit={handleAdminLogin} style={{ background: theme.cardBg, padding: '40px', borderRadius: '8px', border: `1px solid ${theme.border}`, width: '90%', maxWidth: '340px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', textAlign: 'center' }}>
@@ -381,7 +562,18 @@ export default function AdminPage() {
           <button type="submit" disabled={isSubmitting} style={{ width: '100%', padding: '16px', background: theme.btnPrimary, color: 'white', border: 'none', borderRadius: '4px', fontSize: '15px', fontWeight: 'bold', cursor: isSubmitting ? 'not-allowed' : 'pointer', opacity: isSubmitting ? 0.7 : 1, marginBottom: '12px' }}>
             {isSubmitting ? '확인 중...' : '관리자 접속'}
           </button>
-          <button type="button" onClick={() => router.push('/')} style={{ width: '100%', padding: '12px', background: 'transparent', color: theme.textSub, border: 'none', fontSize: '13px', cursor: 'pointer', textDecoration: 'underline' }}>일반 작업자 메인으로 돌아가기</button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+            {currentWorker && (
+              <button
+                type="button"
+                onClick={() => setShowAdminLoginForm(false)}
+                style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: '12px', cursor: 'pointer' }}
+              >
+                ← 이전으로
+              </button>
+            )}
+            <button type="button" onClick={() => router.push('/')} style={{ background: 'transparent', color: theme.textSub, border: 'none', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}>일반 작업자 메인으로</button>
+          </div>
         </form>
       </div>
     );
@@ -390,27 +582,117 @@ export default function AdminPage() {
   // 🔓 관리자 대시보드
   return (
     <div style={{ minHeight: '100vh', background: theme.bg, padding: '40px 16px', fontFamily: "'Pretendard', sans-serif" }}>
+      <style dangerouslySetInnerHTML={{ __html: `
+        @media screen {
+          .admin-print-only { display: none !important; }
+        }
+        @page {
+          size: A4 portrait;
+          margin: 6mm 8mm;
+        }
+        @media print {
+          html, body {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 210mm !important;
+            height: 297mm !important;
+            max-height: 297mm !important;
+            overflow: hidden !important;
+          }
+          body * { visibility: hidden; }
+          .admin-print-only, .admin-print-only * { visibility: visible; }
+          .admin-print-only {
+            display: block !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            max-width: 194mm !important;
+            margin: 0 auto !important;
+            max-height: 284mm !important;
+            overflow: hidden !important;
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+          }
+          .admin-print-only img {
+            max-width: 100% !important;
+            max-height: 100% !important;
+            object-fit: contain !important;
+          }
+        }
+      `}} />
       <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
           <div>
             <h2 style={{ margin: '0 0 8px 0', fontSize: '24px', color: theme.textMain }}>👑 최고 관리자님</h2>
-            <p style={{ margin: 0, color: theme.textSub, fontSize: '14px' }}>협력사 관리 및 현장 점검 기록을 통합 제어합니다.</p>
+            <p style={{ margin: 0, color: theme.textSub, fontSize: '14px' }}>협력사 관리 및 현장 안전점검 · 자재실사 기록을 통합 제어합니다.</p>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={handleLogout} style={{ padding: '10px 20px', background: 'transparent', color: theme.textSub, border: `1px solid ${theme.border}`, borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>로그아웃</button>
-            <button onClick={() => router.push('/')} style={{ padding: '10px 20px', background: theme.btnPrimary, color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>메인으로 나가기</button>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button onClick={() => router.push('/dashboard')} style={{ padding: '8px 14px', background: 'transparent', color: theme.textMain, border: `1px solid ${theme.border}`, borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>🛡️ 안전점검</button>
+            <button onClick={() => router.push('/material')} style={{ padding: '8px 14px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>📦 자재실사 (QC)</button>
+            <button onClick={() => router.push('/material-audit')} style={{ padding: '8px 14px', background: 'transparent', color: theme.textMain, border: `1px solid ${theme.border}`, borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>📊 엑셀 실사</button>
+            <button onClick={handleLogout} style={{ padding: '8px 14px', background: 'transparent', color: theme.textSub, border: `1px solid ${theme.border}`, borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>로그아웃</button>
           </div>
+        </div>
+
+        {/* 탭 전환: [🛡️ 안전점검 기록] vs [📦 자재실사 기록] */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          <button
+            onClick={() => setActiveCategory('safety')}
+            style={{
+              padding: '10px 20px',
+              borderRadius: '8px',
+              border: activeCategory === 'safety' ? '2px solid #2563eb' : `1px solid ${theme.border}`,
+              background: activeCategory === 'safety' ? (isDarkMode ? '#1e3a8a' : '#eff6ff') : theme.cardBg,
+              color: activeCategory === 'safety' ? '#2563eb' : theme.textSub,
+              fontWeight: 'bold',
+              fontSize: '14px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            <span>🛡️ 안전점검 기록</span>
+            <span style={{ fontSize: '12px', background: '#2563eb', color: 'white', padding: '2px 7px', borderRadius: '10px' }}>
+              {filteredReports.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveCategory('material')}
+            style={{
+              padding: '10px 20px',
+              borderRadius: '8px',
+              border: activeCategory === 'material' ? '2px solid #10b981' : `1px solid ${theme.border}`,
+              background: activeCategory === 'material' ? (isDarkMode ? '#064e3b' : '#ecfdf5') : theme.cardBg,
+              color: activeCategory === 'material' ? '#059669' : theme.textSub,
+              fontWeight: 'bold',
+              fontSize: '14px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            <span>📦 자재실사 기록</span>
+            <span style={{ fontSize: '12px', background: '#10b981', color: 'white', padding: '2px 7px', borderRadius: '10px' }}>
+              {filteredMaterialReports.length}
+            </span>
+          </button>
         </div>
 
         <div style={{ background: theme.cardBg, padding: '20px', borderRadius: '8px', border: `1px solid ${theme.border}`, marginBottom: '24px', display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <input
               type="text"
-              placeholder="직원 이름 검색..."
+              placeholder="직원/자재명 검색..."
               value={searchName}
               onChange={(e) => setSearchName(e.target.value)}
-              style={{ padding: '10px', borderRadius: '4px', border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.textMain, fontWeight: 'bold', width: '160px' }}
+              style={{ padding: '10px', borderRadius: '4px', border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.textMain, fontWeight: 'bold', width: '180px' }}
             />
 
             <select value={selectedYear} onChange={(e) => handleYearChange(e.target.value)} style={{ padding: '10px', borderRadius: '4px', border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.textMain, fontWeight: 'bold' }}>
@@ -429,12 +711,45 @@ export default function AdminPage() {
           </div>
 
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <button onClick={() => handleDownloadExcel('자재실사')} style={{ padding: '12px 16px', background: '#f59e0b', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              📦 자재실사 엑셀
-            </button>
-            <button onClick={() => handleDownloadExcel('안전점검')} style={{ padding: '12px 16px', background: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              👷 안전점검 엑셀
-            </button>
+            {activeCategory === 'material' ? (
+              <button
+                onClick={handleDownloadMaterialExcel}
+                style={{
+                  padding: '12px 18px',
+                  background: '#10b981',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: '0 2px 6px rgba(16,185,129,0.3)',
+                }}
+              >
+                <span>📦 협력사관리_자재실사 엑셀 다운로드</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => handleDownloadExcel('안전점검')}
+                style={{
+                  padding: '12px 18px',
+                  background: '#2563eb',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: '0 2px 6px rgba(37,99,235,0.3)',
+                }}
+              >
+                <span>👷 협력사관리_안전점검 엑셀 다운로드</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -448,7 +763,78 @@ export default function AdminPage() {
         <div style={{ background: theme.cardBg, borderRadius: '8px', border: `1px solid ${theme.border}`, overflowX: 'auto' }}>
           {isLoading ? (
             <div style={{ padding: '60px', textAlign: 'center', color: theme.textSub }}>데이터를 불러오는 중입니다...</div>
+          ) : activeCategory === 'material' ? (
+            /* ──────────────── 자재실사 테이블 (표준 컬럼 구조) ──────────────── */
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '920px' }}>
+              <thead>
+                <tr style={{ background: theme.thBg, borderBottom: `2px solid ${theme.border}` }}>
+                  <th style={{ padding: '16px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>일자</th>
+                  <th style={{ padding: '16px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>구분</th>
+                  <th style={{ padding: '16px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>인원</th>
+                  <th style={{ padding: '16px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>협력사</th>
+                  <th style={{ padding: '16px', textAlign: 'left', color: theme.textMain, fontSize: '13px' }}>공사번호</th>
+                  <th style={{ padding: '16px', textAlign: 'left', color: theme.textMain, fontSize: '13px' }}>자재명/규격</th>
+                  <th style={{ padding: '16px', textAlign: 'left', color: theme.textMain, fontSize: '13px' }}>적재위치</th>
+                  <th style={{ padding: '16px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>자재 검수 결과</th>
+                  <th style={{ padding: '16px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>보고서</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredMaterialReports.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} style={{ padding: '40px', textAlign: 'center', color: theme.textSub }}>해당 조건의 자재실사 데이터가 없습니다.</td>
+                  </tr>
+                ) : (
+                  filteredMaterialReports.map((report) => {
+                    const info = extractMaterialInfoFromMarkdown(report.ai_report_text || '');
+                    const dateObj = new Date(report.created_at || report.photo_date || new Date());
+                    const period = dateObj.getHours() < 12 ? '오전' : '오후';
+                    const inspectorName = report.inspector || report.workers?.worker_name || info.inspector || '전현진';
+                    const projNum = report.project_number || info.projectNumber || '안산-설비-2026-0096';
+                    const matType = report.material_type || info.materialType || 'FR-CNCO-W 22kV 60㎟';
+                    const loc = report.photo_location || info.photoLocation || '안산 야외 적재장 A구역';
+                    const resultLabel = report.overall_result || info.overallResultLabel;
+                    const isOk = resultLabel.includes('O');
+
+                    return (
+                      <tr key={report.id} style={{ borderBottom: `1px solid ${theme.border}` }}>
+                        <td style={{ padding: '14px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>{formatDate(dateObj)}</td>
+                        <td style={{ padding: '14px', textAlign: 'center', color: theme.textMain, fontSize: '13px' }}>{period}</td>
+                        <td style={{ padding: '14px', textAlign: 'center', color: theme.textMain, fontSize: '13px', fontWeight: 'bold' }}>{inspectorName}</td>
+                        <td style={{ padding: '14px', textAlign: 'center', color: theme.textSub, fontSize: '13px' }}>{PARTNER_NAME}</td>
+                        <td style={{ padding: '14px', color: theme.textSub, fontSize: '13px' }}>{projNum}</td>
+                        <td style={{ padding: '14px', color: theme.textMain, fontSize: '13px', fontWeight: '500' }}>{matType}</td>
+                        <td style={{ padding: '14px', color: theme.textSub, fontSize: '13px' }}>{loc}</td>
+                        <td style={{ padding: '14px', textAlign: 'center' }}>
+                          <span
+                            style={{
+                              padding: '4px 12px',
+                              borderRadius: '4px',
+                              fontSize: '12px',
+                              fontWeight: 'bold',
+                              background: isOk ? '#10b981' : '#ef4444',
+                              color: 'white',
+                            }}
+                          >
+                            {resultLabel}
+                          </span>
+                        </td>
+                        <td style={{ padding: '14px', textAlign: 'center' }}>
+                          <button
+                            onClick={() => setSelectedReport(report)}
+                            style={{ padding: '6px 14px', background: 'transparent', color: theme.btnPrimary, border: `1px solid ${theme.btnPrimary}`, borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}
+                          >
+                            📄 보기
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           ) : (
+            /* ──────────────── 안전점검 테이블 ──────────────── */
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px' }}>
               <thead>
                 <tr style={{ background: theme.thBg, borderBottom: `2px solid ${theme.border}` }}>
@@ -464,7 +850,7 @@ export default function AdminPage() {
               <tbody>
                 {filteredReports.length === 0 ? (
                   <tr>
-                    <td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: theme.textSub }}>해당 조건의 데이터가 없습니다.</td>
+                    <td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: theme.textSub }}>해당 조건의 안전점검 데이터가 없습니다.</td>
                   </tr>
                 ) : (
                   filteredReports.map((report) => {
@@ -504,9 +890,24 @@ export default function AdminPage() {
 
       {/* 📄 보고서 열람 팝업 */}
       {selectedReport && (() => {
-        const dateObj = new Date(selectedReport.created_at);
+        const isMaterial = Boolean(selectedReport.material_type || selectedReport.ai_report_text?.includes('자재실사'));
+        const dateObj = new Date(selectedReport.created_at || selectedReport.photo_date || new Date());
         const reportText: string = selectedReport.ai_report_text || '';
-        const view = STATUS_VIEW[extractInfoFromMarkdown(reportText).status];
+
+        let badgeLabel = '확인필요';
+        let badgeColor = '#64748b';
+        let inspectorName = selectedReport.inspector || selectedReport.workers?.worker_name || '미상';
+
+        if (isMaterial) {
+          const matInfo = extractMaterialInfoFromMarkdown(reportText);
+          badgeLabel = selectedReport.overall_result || matInfo.overallResultLabel;
+          badgeColor = badgeLabel.includes('O') ? '#10b981' : '#ef4444';
+          if (matInfo.inspector) inspectorName = matInfo.inspector;
+        } else {
+          const view = STATUS_VIEW[extractInfoFromMarkdown(reportText).status];
+          badgeLabel = view.label;
+          badgeColor = view.color;
+        }
 
         return (
           <div
@@ -521,13 +922,32 @@ export default function AdminPage() {
             >
               <div style={{ padding: '16px 20px', borderBottom: `1px solid ${theme.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div style={{ color: theme.textSub, fontSize: '13px' }}>
-                  <strong style={{ color: theme.textMain }}>{selectedReport.workers?.worker_name || '미상'}</strong>
+                  <strong style={{ color: theme.textMain }}>{inspectorName}</strong>
                   {' · '}{formatDate(dateObj)} {dateObj.getHours() < 12 ? '오전' : '오후'} {String(dateObj.getHours()).padStart(2, '0')}:{String(dateObj.getMinutes()).padStart(2, '0')}
-                  <span style={{ marginLeft: '10px', padding: '2px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', background: view.color, color: 'white' }}>
-                    {view.label}
+                  <span style={{ marginLeft: '10px', padding: '2px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', background: badgeColor, color: 'white' }}>
+                    {badgeLabel}
                   </span>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => window.print()}
+                    disabled={!reportText}
+                    style={{
+                      padding: '8px 14px',
+                      background: '#2563eb',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: reportText ? 'pointer' : 'not-allowed',
+                      fontSize: '13px',
+                      fontWeight: 'bold',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                    }}
+                  >
+                    🖨️ 1장 인쇄
+                  </button>
                   <button
                     onClick={() => {
                       saveReportAsText(reportText, `현장안전점검_${selectedReport.workers?.worker_name || '미상'}_${formatDate(dateObj)}.txt`);
@@ -595,6 +1015,23 @@ export default function AdminPage() {
                 })()}
               </div>
             </div>
+          </div>
+        );
+      })()}
+
+      {/* 🖨️ 관리자 과거 보고서 1장 인쇄 전용 영역 */}
+      {selectedReport && (() => {
+        const dateObj = new Date(selectedReport.created_at);
+        const photos = parsePhotoUrls(selectedReport.image_url);
+        return (
+          <div className="admin-print-only" style={{ background: '#ffffff', color: '#000000', width: '100%', maxWidth: '740px', margin: '0 auto' }}>
+            <OnePageReport
+              reportText={selectedReport.ai_report_text || ''}
+              photoUrls={photos}
+              workerName={selectedReport.workers?.worker_name || '미상'}
+              dateStr={formatDate(dateObj)}
+              isPrintVersion={true}
+            />
           </div>
         );
       })()}

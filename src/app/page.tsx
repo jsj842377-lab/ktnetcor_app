@@ -1,13 +1,29 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
   const router = useRouter();
+  const [serviceType, setServiceType] = useState<'safety' | 'material'>('safety');
   const [workerName, setWorkerName] = useState('');
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+
+  useEffect(() => {
+    try {
+      const savedService = localStorage.getItem('kt_last_selected_service');
+      if (savedService === 'material' || savedService === 'safety') {
+        setServiceType(savedService);
+      }
+      const savedWorker = localStorage.getItem('kt_current_worker');
+      if (savedWorker && savedWorker !== '관리자') {
+        setWorkerName(savedWorker);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,20 +41,34 @@ export default function LoginPage() {
       return;
     }
 
+    try {
+      localStorage.setItem('kt_last_selected_service', serviceType);
+    } catch {
+      // ignore
+    }
+
     // 관리자 계정: '관리자' / '1234' 입력 시 최고 관리자 페이지로 이동
     if (trimmedName === '관리자' && trimmedPw === '1234') {
+      localStorage.setItem('kt_current_worker', '관리자');
       router.push('/admin');
       return;
     }
 
-    // 일반 작업자 로그인 시 대시보드로 이동
+    // 일반 작업자 로그인: 선택한 시스템(안전점검 vs 자재실사)으로 직행
     localStorage.setItem('kt_current_worker', trimmedName);
-    router.push(`/dashboard?worker=${encodeURIComponent(trimmedName)}`);
+    if (serviceType === 'material') {
+      router.push(`/material?worker=${encodeURIComponent(trimmedName)}`);
+    } else {
+      router.push(`/dashboard?worker=${encodeURIComponent(trimmedName)}`);
+    }
   };
 
-  const handleQuickFill = (name: string, pw: string) => {
+  const handleQuickFill = (name: string, pw: string, targetService?: 'safety' | 'material') => {
     setWorkerName(name);
     setPassword(pw);
+    if (targetService) {
+      setServiceType(targetService);
+    }
     setErrorMessage('');
   };
 
@@ -276,6 +306,86 @@ export default function LoginPage() {
           opacity: 0.75;
         }
 
+        .service-selector-wrapper {
+          margin-bottom: 22px;
+        }
+
+        .service-selector {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+        }
+
+        .service-btn {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 12px 14px;
+          border: 1.5px solid var(--ink-faint);
+          background: #ffffff;
+          border-radius: 8px;
+          cursor: pointer;
+          text-align: left;
+          transition: all 0.2s ease;
+        }
+
+        .service-btn:hover {
+          border-color: var(--ink-muted);
+          background: var(--bg);
+        }
+
+        .service-btn.active {
+          border-color: var(--ink);
+          background: var(--ink);
+          color: var(--bg);
+          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+        }
+
+        .service-icon {
+          font-size: 1.45rem;
+          line-height: 1;
+          flex-shrink: 0;
+        }
+
+        .service-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          overflow: hidden;
+        }
+
+        .service-name {
+          font-size: 0.9rem;
+          font-weight: 700;
+          letter-spacing: -0.01em;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+
+        .service-desc {
+          font-size: 0.68rem;
+          opacity: 0.75;
+          letter-spacing: -0.01em;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .service-btn.active .service-desc {
+          opacity: 0.85;
+          color: rgba(255, 255, 255, 0.85);
+        }
+
+        .service-tag {
+          font-size: 0.58rem;
+          padding: 1px 4px;
+          border-radius: 3px;
+          background: #10b981;
+          color: #ffffff;
+          font-weight: 700;
+        }
+
         footer.v3-footer {
           display: flex;
           justify-content: space-between;
@@ -302,13 +412,24 @@ export default function LoginPage() {
           <div className="v3-card">
             {/* Content Area (Left) */}
             <div className="content-area">
-              <span className="icon-seal" role="img" aria-label="안전모 작업자">👷</span>
+              <span className="icon-seal" role="img" aria-label={serviceType === 'safety' ? '안전모 작업자' : '자재 박스'}>
+                {serviceType === 'safety' ? '👷' : '📦'}
+              </span>
               <h1 className="v3-title">
-                협력사<br />관리시스템
+                {serviceType === 'safety' ? (
+                  <>
+                    현장<br />안전점검
+                  </>
+                ) : (
+                  <>
+                    자재품질<br />실사시스템
+                  </>
+                )}
               </h1>
               <p className="description">
-                경기설계팀 현장 안전점검 보고 시스템.<br />
-                이름과 비밀번호를 입력하여 입장하십시오.
+                {serviceType === 'safety'
+                  ? '경기설계팀 현장 안전점검 및 위험요소 실시간 판정 시스템. 이름과 비밀번호를 입력하여 입장하십시오.'
+                  : '경기설계팀 현장 반입 자재 규격 OCR 교차 검증 및 5대 검수 품질 실사 시스템. 이름과 비밀번호를 입력하여 입장하십시오.'}
               </p>
             </div>
 
@@ -317,6 +438,41 @@ export default function LoginPage() {
 
             {/* Form Area (Right) */}
             <div className="form-area">
+              {/* 시스템 사전 선택 (로그인 전 선택) */}
+              <div className="service-selector-wrapper">
+                <div className="mono" style={{ marginBottom: '8px', color: 'var(--accent)', fontWeight: 600 }}>
+                  Select Target System // 접속 대상 시스템 선택
+                </div>
+                <div className="service-selector">
+                  <button
+                    type="button"
+                    className={`service-btn ${serviceType === 'safety' ? 'active' : ''}`}
+                    onClick={() => setServiceType('safety')}
+                  >
+                    <span className="service-icon">🛡️</span>
+                    <div className="service-info">
+                      <span className="service-name">안전점검</span>
+                      <span className="service-desc">보호구 및 위험요소</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`service-btn ${serviceType === 'material' ? 'active' : ''}`}
+                    onClick={() => setServiceType('material')}
+                  >
+                    <span className="service-icon">📦</span>
+                    <div className="service-info">
+                      <span className="service-name">
+                        자재실사
+                        <span className="service-tag">QC</span>
+                      </span>
+                      <span className="service-desc">규격 OCR 및 일치율</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
               <form onSubmit={handleLogin} className="v3-form">
                 <div className="input-group">
                   <div className="mono" style={{ marginBottom: '4px', opacity: 1, color: 'var(--accent)' }}>
@@ -359,7 +515,9 @@ export default function LoginPage() {
                 )}
 
                 <button type="submit" className="submit-btn">
-                  현장 입장하기 — ENTER SITE
+                  {serviceType === 'safety'
+                    ? '🛡️ 안전점검 시스템 입장 — ENTER SAFETY'
+                    : '📦 자재실사(QC) 시스템 입장 — ENTER MATERIAL QC'}
                 </button>
 
                 {/* 빠른 채우기 보조 버튼 */}
@@ -368,9 +526,17 @@ export default function LoginPage() {
                   <button
                     type="button"
                     className="quick-link"
-                    onClick={() => handleQuickFill('홍길동', '1234')}
+                    onClick={() => handleQuickFill('홍길동', '1234', 'safety')}
                   >
-                    작업자
+                    안전점검(홍길동)
+                  </button>
+                  <span>/</span>
+                  <button
+                    type="button"
+                    className="quick-link"
+                    onClick={() => handleQuickFill('전현진', '1234', 'material')}
+                  >
+                    자재실사(전현진)
                   </button>
                   <span>/</span>
                   <button

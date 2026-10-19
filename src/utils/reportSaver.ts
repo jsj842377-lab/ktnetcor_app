@@ -43,15 +43,15 @@ export function saveReportAsHtml(
   <title>${title}</title>
   <style>
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-    @page { size: A4 portrait; margin: 8mm 10mm; }
-    body { font-family: 'Pretendard', sans-serif; margin: 20px auto; max-width: 740px; color: #0f172a; background: #fff; line-height: 1.4; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 8px; border: 1.5px solid #1e293b; }
-    th { border: 1px solid #cbd5e1; background: #f1f5f9; padding: 4px 6px; font-size: 11px; text-align: center; }
-    td { border: 1px solid #cbd5e1; padding: 4px 6px; font-size: 11px; }
-    h2 { font-size: 18px; margin: 0 0 10px 0; border-bottom: 2px solid #0f172a; padding-bottom: 6px; }
-    h3 { font-size: 15px; margin: 10px 0 6px 0; }
-    h4 { font-size: 12px; margin: 8px 0 4px 0; color: #1e293b; }
-    img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; display: block; margin: 0 auto; }
+    @page { size: A4 portrait; margin: 6mm 8mm; }
+    body { font-family: 'Pretendard', sans-serif; margin: 12px auto; max-width: 740px; color: #0f172a; background: #fff; line-height: 1.25; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 4px; border: 1.5px solid #1e293b; }
+    th { border: 1px solid #cbd5e1; background: #f1f5f9; padding: 3px 4px; font-size: 10px; text-align: center; }
+    td { border: 1px solid #cbd5e1; padding: 2.5px 5px; font-size: 9.5px; }
+    h2 { font-size: 16px; margin: 0 0 6px 0; border-bottom: 2px solid #0f172a; padding-bottom: 4px; }
+    h3 { font-size: 14px; margin: 6px 0 4px 0; }
+    h4 { font-size: 11px; margin: 4px 0 2px 0; color: #1e293b; }
+    img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 3px; display: block; margin: 0 auto; }
   </style>
 </head>
 <body>

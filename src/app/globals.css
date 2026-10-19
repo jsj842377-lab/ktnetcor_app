@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,300;1,600&family=Inter:wght@300;400;500;600&family=Geist+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
 
 :root {
   --bg: #fdfdfc;
@@ -22,4 +23,47 @@
   --color-foreground: var(--ink);
   --font-sans: var(--font-inter);
   --font-mono: var(--font-jetbrains-mono);
+}
+
+/* 모바일 화면 가독성 및 글자 크기 보정 (글씨가 너무 작게 보이는 현상 개선) */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+@media screen and (max-width: 768px) {
+  html, body {
+    font-size: 15px !important;
+  }
+  
+  /* 모바일에서 터치 타겟 및 가독성 확보 */
+  button, input, textarea, select {
+    font-size: 15px !important;
+    min-height: 40px;
+  }
+  
+  /* 모바일에서 테이블 및 보고서 가로 스크롤 및 글자 확대 */
+  .one-page-report-root {
+    padding: 14px 12px !important;
+    font-size: 13.5px !important;
+  }
+  
+  .one-page-report-root table th,
+  .one-page-report-root table td {
+    font-size: 12.5px !important;
+    padding: 6px 6px !important;
+    line-height: 1.4 !important;
+  }
+  
+  .one-page-report-root h3 {
+    font-size: 17px !important;
+  }
+  
+  .one-page-report-root h4 {
+    font-size: 14px !important;
+  }
+
+  .one-page-report-root p {
+    font-size: 13px !important;
+  }
 }

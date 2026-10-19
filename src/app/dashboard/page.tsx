@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense, useRef, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { supabase } from '@/utils/supabase';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -22,7 +23,20 @@ import {
 import ImageLightbox from '@/components/ImageLightbox';
 import { PhotoThumb } from '@/components/PhotoThumb';
 import OnePageReport from '@/components/OnePageReport';
+import TechnicalTermInput from '@/components/TechnicalTermInput';
+import { detectTypoSuggestions } from '@/utils/technicalGlossary';
 import { saveReportAsText, saveReportAsHtml } from '@/utils/reportSaver';
+import { generateStoragePath, renameUploadedPhotos, formatDateToYYYYMMDD, sanitizeProjectNumber } from '@/utils/photoRenamer';
+import dynamic from 'next/dynamic';
+
+const HazardMapDashboard = dynamic(() => import('@/components/HazardMapDashboard'), {
+  ssr: false,
+  loading: () => (
+    <div style={{ height: '450px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', color: '#64748b', border: '1px solid #cbd5e1' }}>
+      🗺️ 지도 대시보드를 불러오는 중입니다...
+    </div>
+  ),
+});
 
 const ALLOWED_WORKERS = ['전현진', '김관희', '김용', '박상원', '박용화', '박현지', '안주형', '윤성우', '임동균', '김명현'];
 
@@ -66,7 +80,7 @@ const convertCoordsToAddress = async (lat: number, lon: number): Promise<string>
         addr.house_number || '',
       ].filter(Boolean);
       const uniqueParts = parts.filter((item, idx) => parts.indexOf(item) === idx);
-      if (uniqueParts.length >= 2) return uniqueParts.join(' ');
+      if (uniqueParts.length >= 2) return `${uniqueParts.join(' ')} (${lat.toFixed(6)}, ${lon.toFixed(6)})`;
     }
 
     if (data?.display_name) {
@@ -76,7 +90,7 @@ const convertCoordsToAddress = async (lat: number, lon: number): Promise<string>
         .filter((s: string) => s !== '대한민국' && s !== 'South Korea' && !/^\d{5}$/.test(s))
         .reverse()
         .join(' ');
-      if (reversedAddress) return reversedAddress;
+      if (reversedAddress) return `${reversedAddress} (${lat.toFixed(6)}, ${lon.toFixed(6)})`;
     }
   } catch (e) {
     console.warn('주소 변환 실패:', e);
@@ -161,6 +175,7 @@ function DashboardContent() {
   const [trashedReports, setTrashedReports] = useState<any[]>([]);
   const [showPast, setShowPast] = useState<boolean>(false);
   const [showTrash, setShowTrash] = useState<boolean>(false);
+  const [pastViewMode, setPastViewMode] = useState<'list' | 'map'>('list');
 
   const [showLevelUpModal, setShowLevelUpModal] = useState<boolean>(false);
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
@@ -393,15 +408,29 @@ function DashboardContent() {
     if (!element) return;
     setIsPdfGenerating(true);
 
+    const prevWidth = element.style.width;
+    const prevMaxWidth = element.style.maxWidth;
+
     try {
+      // PDF 캡처 시 모바일 화면 등 좁은 뷰포트에서도 A4 표준폭(740px)으로 렌더링하여 1장 내 완벽 배치 보장
+      element.style.width = '740px';
+      element.style.maxWidth = '740px';
+
       await waitForImages(element);
       const html2pdf = (await import('html2pdf.js')).default;
       const d = new Date();
       const opt = {
-        margin: [8, 10, 8, 10] as [number, number, number, number],
+        margin: [6, 8, 6, 8] as [number, number, number, number],
         filename: `현장안전점검보고서_1장_${formatYMD(d)}_${workerName}.pdf`,
         image: { type: 'jpeg' as const, quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollY: 0, windowWidth: 794 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          backgroundColor: '#ffffff',
+          scrollY: 0,
+          scrollX: 0,
+          windowWidth: 794,
+        },
         jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
         pagebreak: { mode: 'avoid-all' }
       };
@@ -409,6 +438,8 @@ function DashboardContent() {
     } catch (err: any) {
       alert(`PDF 생성 실패: ${err.message || err}`);
     } finally {
+      element.style.width = prevWidth;
+      element.style.maxWidth = prevMaxWidth;
       setIsPdfGenerating(false);
     }
   };
@@ -424,15 +455,28 @@ function DashboardContent() {
         return;
       }
 
+      const prevWidth = element.style.width;
+      const prevMaxWidth = element.style.maxWidth;
+
       try {
+        element.style.width = '740px';
+        element.style.maxWidth = '740px';
+
         await waitForImages(element);
         const d = new Date(item.created_at);
         const html2pdf = (await import('html2pdf.js')).default;
         const opt = {
-          margin: [8, 10, 8, 10] as [number, number, number, number],
+          margin: [6, 8, 6, 8] as [number, number, number, number],
           filename: `현장안전점검보고서_1장_${formatYMD(d)}_${workerName}.pdf`,
           image: { type: 'jpeg' as const, quality: 0.98 },
-          html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollY: 0, windowWidth: 794 },
+          html2canvas: {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            scrollY: 0,
+            scrollX: 0,
+            windowWidth: 794,
+          },
           jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
           pagebreak: { mode: 'avoid-all' }
         };
@@ -441,6 +485,8 @@ function DashboardContent() {
       } catch (err: any) {
         alert(`PDF 다운로드 실패: ${err.message || err}`);
       } finally {
+        element.style.width = prevWidth;
+        element.style.maxWidth = prevMaxWidth;
         setPrintItem(null);
         setIsPdfGenerating(false);
       }
@@ -452,13 +498,20 @@ function DashboardContent() {
     setPrintItem(item);
 
     setTimeout(async () => {
-      await waitForImages(document.getElementById('past-report-a4-pdf'));
+      const elem = document.getElementById('past-report-a4-pdf');
+      await waitForImages(elem);
       setIsPdfGenerating(false);
+
+      const handleAfterPrint = () => {
+        window.removeEventListener('afterprint', handleAfterPrint);
+        setPrintItem(null);
+      };
+      window.addEventListener('afterprint', handleAfterPrint);
+
       setTimeout(() => {
         window.print();
-        setPrintItem(null);
-      }, 200);
-    }, 150);
+      }, 50);
+    }, 250);
   };
 
   const showToast = (msg: string) => {
@@ -573,25 +626,33 @@ function DashboardContent() {
     try {
       const t0 = Date.now();
 
-      // 사진 업로드를 AI 분석과 동시에 시작 (서로 기다리지 않게 해서 전체 대기 시간을 줄임)
-      const uploadPromise = Promise.all(photoFiles.map(async (f) => {
-        const ext = f.name && f.name.includes('.') ? f.name.split('.').pop() : 'jpg';
-        const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}.${ext}`;
+      // 1) 사진 촬영일 추출
+      const photoDate = await getPhotoDate(photoFiles[0]);
+      const photoDateStr = `${photoDate.getFullYear()}년 ${photoDate.getMonth() + 1}월 ${photoDate.getDate()}일`;
+
+      // 2) 공사번호 및 촬영일자 패턴 기반 파일 자동 명명(Renaming)
+      const renamedPhotoFiles = renameUploadedPhotos(photoFiles, {
+        projectNumber: projectNumberInput,
+        date: photoDate,
+        includeEntropy: true,
+      });
+
+      // 3) 사진 업로드를 AI 분석과 동시에 시작 (공사번호_일자_순번 패턴으로 스토리지 저장)
+      const uploadPromise = Promise.all(renamedPhotoFiles.map(async (f) => {
+        const fileName = f.name; // 공사번호_일자_순번_해시.jpg
         const { error: uploadError } = await supabase.storage.from('inspections').upload(fileName, f);
-        if (uploadError) throw new Error('스토리지 사진 저장 실패');
+        if (uploadError) throw new Error(`스토리지 사진 저장 실패: ${uploadError.message || ''}`);
         uploadedNames.push(fileName); // 실패 시 정리용
         return fileName;
       }));
 
-      // 촬영일 / 위치 확인 → AI 분석
+      // 4) 위치 확인 → AI 분석
       const analyzePromise = (async (): Promise<string> => {
-        const photoDate = await getPhotoDate(photoFiles[0]);
-        const photoDateStr = `${photoDate.getFullYear()}년 ${photoDate.getMonth() + 1}월 ${photoDate.getDate()}일`;
-        const finalLocationData = await getLocationText(photoFiles);
+        const finalLocationData = await getLocationText(renamedPhotoFiles);
         console.log(`[타이밍] 촬영일/위치 확인 ${Date.now() - t0}ms`);
 
         const formData = new FormData();
-        photoFiles.forEach((f) => formData.append('images', f));
+        renamedPhotoFiles.forEach((f) => formData.append('images', f));
         formData.append('photoDate', photoDateStr);
         formData.append('photoLocation', finalLocationData);
         formData.append('projectNumber', projectNumberInput || '미입력');
@@ -690,12 +751,28 @@ function DashboardContent() {
         .avoid-break { page-break-inside: avoid !important; break-inside: avoid !important; }
         @page {
           size: A4 portrait;
-          margin: 8mm 10mm;
+          margin: 6mm 8mm;
         }
         @media screen {
-          .print-only { display: none !important; }
+          .print-only {
+            position: fixed !important;
+            left: -9999px !important;
+            top: 0 !important;
+            width: 740px !important;
+            max-width: 740px !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+            z-index: -9999 !important;
+          }
         }
         @media print {
+          .print-only {
+            position: relative !important;
+            left: 0 !important;
+            top: 0 !important;
+            opacity: 1 !important;
+            display: block !important;
+          }
           html, body {
             background-color: #ffffff !important;
             color: #000000 !important;
@@ -720,12 +797,17 @@ function DashboardContent() {
             left: 0 !important;
             top: 0 !important;
             width: 100% !important;
-            max-width: 190mm !important;
+            max-width: 194mm !important;
             margin: 0 auto !important;
             box-sizing: border-box !important;
             page-break-inside: avoid !important;
+            break-inside: avoid !important;
             page-break-after: avoid !important;
             break-after: avoid !important;
+            page-break-before: avoid !important;
+            break-before: avoid !important;
+            max-height: 284mm !important;
+            overflow: hidden !important;
           }
           .print-area-1page img {
             max-width: 100% !important;
@@ -771,6 +853,114 @@ function DashboardContent() {
           <div style={{ width: '60px', height: '60px', border: '5px solid rgba(255,255,255,0.2)', borderTop: '5px solid #3b82f6', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '24px' }} /><h3 style={{ color: '#60a5fa', fontSize: '15px', marginBottom: '16px', fontWeight: 'bold' }}>Vision AI 분석 중...</h3><div style={{ height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><p key={loadingTip} style={{ color: 'white', fontSize: '20px', fontWeight: 'bold', textAlign: 'center', animation: 'fadeInOut 1.5s ease-in-out forwards', margin: 0 }}>"{loadingTip}"</p></div>
         </div>
       )}
+
+      {/* 🧭 시스템 통합 모듈 네비게이션 (안전점검 / 자재실사 / 관리자) */}
+      <div
+        className="no-print"
+        style={{
+          background: theme.cardBg,
+          border: `1px solid ${theme.border}`,
+          padding: '10px 16px',
+          marginBottom: '16px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '10px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '18px' }}>🛡️</span>
+          <div>
+            <strong style={{ fontSize: '14px', color: theme.textMain }}>
+              경기설계팀 현장 안전점검 시스템
+            </strong>
+            <span style={{ marginLeft: '8px', fontSize: '11px', background: '#10b981', color: 'white', padding: '1px 6px', borderRadius: '3px', fontWeight: 'bold' }}>
+              안전점검 모드
+            </span>
+          </div>
+        </div>
+
+        {/* 탭 전환 버튼 */}
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <div
+            style={{
+              padding: '6px 14px',
+              fontSize: '12.5px',
+              fontWeight: '800',
+              background: '#2563eb',
+              color: '#ffffff',
+              borderRadius: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: '0 2px 4px rgba(37,99,235,0.25)',
+            }}
+          >
+            <span>🛡️ 안전점검 시스템</span>
+          </div>
+
+          <Link
+            href={`/material?worker=${encodeURIComponent(workerName)}`}
+            style={{
+              textDecoration: 'none',
+              padding: '6px 14px',
+              fontSize: '12.5px',
+              fontWeight: 'bold',
+              background: '#2563eb',
+              color: '#ffffff',
+              borderRadius: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: '0 2px 4px rgba(37,99,235,0.2)',
+            }}
+          >
+            <span>📦 자재실사 (QC)</span>
+            <span style={{ fontSize: '10px', background: '#10b981', color: 'white', padding: '1px 5px', borderRadius: '3px' }}>
+              NEW
+            </span>
+          </Link>
+
+          <Link
+            href={`/material?worker=${encodeURIComponent(workerName)}&tab=chat`}
+            style={{
+              textDecoration: 'none',
+              padding: '6px 12px',
+              fontSize: '12.5px',
+              fontWeight: 'bold',
+              background: '#8b5cf6',
+              color: '#ffffff',
+              borderRadius: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: '0 2px 4px rgba(139,92,246,0.25)',
+            }}
+          >
+            <span>🤖 AI 자재 챗봇</span>
+          </Link>
+
+          <Link
+            href={`/material-audit?worker=${encodeURIComponent(workerName)}`}
+            style={{
+              textDecoration: 'none',
+              padding: '6px 12px',
+              fontSize: '12.5px',
+              fontWeight: 'bold',
+              background: theme.btnCancel,
+              color: theme.textMain,
+              border: `1px solid ${theme.border}`,
+              borderRadius: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            <span>📊 엑셀 실사</span>
+          </Link>
+        </div>
+      </div>
 
       <div className="no-print" style={{ padding: '16px', borderRadius: '0', background: theme.cardBg, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px', border: `1px solid ${theme.border}` }}>
         <div style={{ padding: '4px', background: 'transparent', position: 'relative', width: '90px', height: '90px', flexShrink: 0 }}>
@@ -818,6 +1008,19 @@ function DashboardContent() {
         <div style={{ marginBottom: '4px' }}>
           <label style={{ display: 'block', fontSize: '13px', color: theme.textSub, marginBottom: '6px', fontWeight: 'bold' }}>작업내용</label>
           <input type="text" value={workDescInput} onChange={e => setWorkDescInput(e.target.value)} placeholder="예: 현장 안전 수칙 준수 및 자재 적재 상태 확인" style={{ width: '100%', padding: '10px', borderRadius: '0', border: `1px solid ${theme.border}`, boxSizing: 'border-box', background: theme.inputBg, color: theme.textMain }} />
+        </div>
+
+        {/* 공사번호 & 일자 기반 스토리지 자동 명명 패턴 안내 */}
+        <div style={{ marginTop: '12px', padding: '8px 12px', background: '#f8fafc', border: `1px solid ${theme.border}`, borderRadius: '4px', fontSize: '11.5px', color: theme.textSub, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+          <span>
+            🏷️ <strong>사진 스토리지 자동 저장 규칙:</strong>{' '}
+            <code style={{ background: '#e2e8f0', padding: '2px 6px', borderRadius: '3px', color: '#0f172a', fontWeight: 'bold' }}>
+              {sanitizeProjectNumber(projectNumberInput)}_{formatDateToYYYYMMDD(new Date())}_01.jpg
+            </code>
+          </span>
+          <span style={{ fontSize: '11px', color: '#2563eb', fontWeight: 'bold' }}>
+            ✓ 공사번호 + 촬영일자 기반 자동 리네이밍
+          </span>
         </div>
       </div>
 
@@ -909,31 +1112,133 @@ function DashboardContent() {
           {isEditing ? (
             <div className="no-print" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div style={{ background: '#1e293b', padding: '16px', borderRadius: '0', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <h4 style={{ color: '#60a5fa', margin: 0, fontSize: '15px' }}>💻 조치사항 간편 입력</h4>
-                  {lastSavedTime && <span style={{ fontSize: '12px', color: '#10b981', fontWeight: 'bold' }}>✓ {lastSavedTime}</span>}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <h4 style={{ color: '#60a5fa', margin: 0, fontSize: '15px' }}>💻 조치사항 간편 입력</h4>
+                    <span style={{ fontSize: '11px', background: '#1e3a8a', color: '#93c5fd', padding: '2px 8px', borderRadius: '4px', border: '1px solid #3b82f6' }}>
+                      ✨ 전문 용어 자동완성 &amp; 오타 제안 적용
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        let totalFixed = 0;
+                        const newForm = editForm.map((item) => {
+                          let action = item.action;
+                          let note = item.note;
+                          detectTypoSuggestions(action).forEach((t) => {
+                            action = action.replace(new RegExp(t.wrongWord, 'g'), t.suggestedTerm);
+                            totalFixed++;
+                          });
+                          detectTypoSuggestions(note).forEach((t) => {
+                            note = note.replace(new RegExp(t.wrongWord, 'g'), t.suggestedTerm);
+                            totalFixed++;
+                          });
+                          return { ...item, action, note };
+                        });
+                        let newSummary = summaryNote;
+                        detectTypoSuggestions(newSummary).forEach((t) => {
+                          newSummary = newSummary.replace(new RegExp(t.wrongWord, 'g'), t.suggestedTerm);
+                          totalFixed++;
+                        });
+                        setEditForm(newForm);
+                        setSummaryNote(newSummary);
+                        alert(
+                          totalFixed > 0
+                            ? `총 ${totalFixed}건의 전문 용어 오타가 표준어로 일괄 교정되었습니다!`
+                            : '현재 입력란에 감지된 전문 용어 오타가 없습니다. 모두 표준어 규격입니다.'
+                        );
+                      }}
+                      style={{
+                        padding: '4px 10px',
+                        background: '#3b82f6',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        fontSize: '11.5px',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                      title="입력된 조치사항과 비고 전체를 검사하여 광분베함, 5G 안태나 등의 오타를 일괄 교정합니다."
+                    >
+                      🪄 전문용어 일괄 오타 교정
+                    </button>
+                    {lastSavedTime && <span style={{ fontSize: '12px', color: '#10b981', fontWeight: 'bold' }}>✓ {lastSavedTime}</span>}
+                  </div>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {editForm.map((item, i) => (
-                    <div key={i} style={{ display: 'flex', gap: '8px', background: '#334155', padding: '10px', borderRadius: '0', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <div style={{ width: '140px', color: 'white', fontSize: '13px', fontWeight: 'bold' }}>{item.name}</div>
-                      <select value={item.result} onChange={e => handleFormChange(i, 'result', e.target.value)} style={{ padding: '8px', borderRadius: '0', border: 'none', outline: 'none', backgroundColor: '#f1f5f9', color: '#0f172a', fontWeight: 'bold' }}>
+                    <div key={i} style={{ display: 'flex', gap: '8px', background: '#334155', padding: '10px', borderRadius: '4px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                      <div style={{ width: '130px', color: 'white', fontSize: '13px', fontWeight: 'bold', paddingTop: '8px' }}>{item.name}</div>
+                      <select value={item.result} onChange={e => handleFormChange(i, 'result', e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: 'none', outline: 'none', backgroundColor: '#f1f5f9', color: '#0f172a', fontWeight: 'bold', height: '36px' }}>
                         <option value="">(상태 선택)</option><option value="양호">양호</option><option value="불량">불량</option>
                       </select>
-                      <input type="text" placeholder="조치사항 입력..." value={item.action} onChange={e => handleFormChange(i, 'action', e.target.value)} style={{ flex: 1, minWidth: '150px', padding: '8px', borderRadius: '0', border: 'none', outline: 'none', backgroundColor: '#f1f5f9', color: '#0f172a' }} />
-                      <input type="text" placeholder="비고..." value={item.note} onChange={e => handleFormChange(i, 'note', e.target.value)} style={{ width: '80px', padding: '8px', borderRadius: '0', border: 'none', outline: 'none', backgroundColor: '#f1f5f9', color: '#0f172a' }} />
+                      <div style={{ flex: 2, minWidth: '180px' }}>
+                        <TechnicalTermInput
+                          fieldType="action"
+                          value={item.action}
+                          onChange={(val) => handleFormChange(i, 'action', val)}
+                          placeholder="조치사항 입력 (예: 광분배함 먼지캡 체결, 5G 안테나 볼트 재조임)..."
+                          theme={{
+                            inputBg: '#f8fafc',
+                            border: '#cbd5e1',
+                            textMain: '#0f172a',
+                            textSub: '#64748b',
+                            cardBg: '#ffffff',
+                            btnCancel: '#e2e8f0',
+                          }}
+                          showQuickPills={false}
+                        />
+                      </div>
+                      <div style={{ width: '140px' }}>
+                        <TechnicalTermInput
+                          fieldType="note"
+                          value={item.note}
+                          onChange={(val) => handleFormChange(i, 'note', val)}
+                          placeholder="비고..."
+                          theme={{
+                            inputBg: '#f8fafc',
+                            border: '#cbd5e1',
+                            textMain: '#0f172a',
+                            textSub: '#64748b',
+                            cardBg: '#ffffff',
+                            btnCancel: '#e2e8f0',
+                          }}
+                          showQuickPills={false}
+                        />
+                      </div>
                     </div>
                   ))}
 
-                  <div style={{ background: '#334155', padding: '10px', borderRadius: '0' }}>
-                    <div style={{ color: 'white', fontSize: '13px', fontWeight: 'bold', marginBottom: '8px' }}>종합 특이사항</div>
-                    <textarea
-                      value={summaryNote}
-                      onChange={e => setSummaryNote(e.target.value)}
-                      placeholder="종합 특이사항 입력..."
+                  <div style={{ background: '#334155', padding: '12px', borderRadius: '4px' }}>
+                    <div style={{ color: 'white', fontSize: '13px', fontWeight: 'bold', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span>종합 특이사항</span>
+                      <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 'normal' }}>
+                        초성 검색(ㄱㅂㅎ, ㅇㅌㄴ) &amp; 하단 빠른 용어 버튼 지원
+                      </span>
+                    </div>
+                    <TechnicalTermInput
+                      isTextarea
                       rows={3}
-                      style={{ width: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '0', border: 'none', outline: 'none', backgroundColor: '#f1f5f9', color: '#0f172a', resize: 'vertical', fontFamily: 'inherit' }}
+                      fieldType="general"
+                      value={summaryNote}
+                      onChange={setSummaryNote}
+                      placeholder="종합 특이사항 입력 (광분배함, 5G 안테나, 광접속함체 등 전문 용어 자동 완성 및 오타 자동 감지 지원)..."
+                      theme={{
+                        inputBg: '#f8fafc',
+                        border: '#cbd5e1',
+                        textMain: '#0f172a',
+                        textSub: '#64748b',
+                        cardBg: '#ffffff',
+                        btnCancel: '#e2e8f0',
+                      }}
+                      showQuickPills={true}
                     />
                   </div>
                 </div>
@@ -1104,35 +1409,200 @@ function DashboardContent() {
 
       {/* 과거 기록 영역 */}
       <div className="no-print" style={{ marginTop: '30px' }}>
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
-          <button onClick={() => { setShowPast(!showPast); setShowTrash(false); }} style={{ flex: 1, padding: '16px', background: showPast && !showTrash ? '#2563eb' : theme.cardBg, border: `1px solid ${theme.border}`, color: showPast && !showTrash ? 'white' : theme.textMain, borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>
-            과거 기록 보기 ({activeReports.length}건)
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
+          <button
+            onClick={() => {
+              setShowPast(!showPast || pastViewMode !== 'list');
+              setShowTrash(false);
+              setPastViewMode('list');
+            }}
+            style={{
+              flex: '1 1 180px',
+              padding: '16px',
+              background: showPast && !showTrash && pastViewMode === 'list' ? '#2563eb' : theme.cardBg,
+              border: `1px solid ${theme.border}`,
+              color: showPast && !showTrash && pastViewMode === 'list' ? 'white' : theme.textMain,
+              borderRadius: '0',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+            }}
+          >
+            📋 과거 기록 목록 ({activeReports.length}건)
           </button>
-          <button onClick={() => { setShowPast(true); setShowTrash(true); }} style={{ width: '120px', padding: '16px', background: showTrash ? '#ef4444' : theme.cardBg, border: `1px solid ${theme.border}`, color: showTrash ? 'white' : theme.textMain, borderRadius: '0', cursor: 'pointer', fontWeight: 'bold' }}>
+          <button
+            onClick={() => {
+              setShowPast(true);
+              setShowTrash(false);
+              setPastViewMode('map');
+            }}
+            style={{
+              flex: '1 1 200px',
+              padding: '16px',
+              background: showPast && !showTrash && pastViewMode === 'map' ? '#ef4444' : theme.cardBg,
+              border: `1px solid ${theme.border}`,
+              color: showPast && !showTrash && pastViewMode === 'map' ? 'white' : theme.textMain,
+              borderRadius: '0',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+            }}
+          >
+            <span>🗺️ 지도에서 위험 위치 보기</span>
+            <span style={{ fontSize: '11px', background: 'rgba(0,0,0,0.18)', padding: '2px 6px', borderRadius: '4px' }}>
+              GPS 분석
+            </span>
+          </button>
+          <button
+            onClick={() => {
+              setShowPast(true);
+              setShowTrash(true);
+            }}
+            style={{
+              width: '120px',
+              padding: '16px',
+              background: showTrash ? '#ef4444' : theme.cardBg,
+              border: `1px solid ${theme.border}`,
+              color: showTrash ? 'white' : theme.textMain,
+              borderRadius: '0',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+            }}
+          >
             🗑️ 휴지통 ({trashedReports.length})
           </button>
         </div>
 
         {showPast && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {displayReports.length === 0 && (
-              <div style={{ padding: '30px', textAlign: 'center', color: theme.textSub }}>{showTrash ? '휴지통이 비어있습니다.' : '저장된 과거 기록이 없습니다.'}</div>
-            )}
-            {displayReports.map((item) => {
-              const isExpanded = expandedReportId === item.id;
-              const status = analyzeReport(item.ai_report_text || '');
-              const statusView = {
-                danger: { label: '⚠️ 위험요소 검출', color: '#ef4444' },
-                ok: { label: '✅ 전체 양호', color: '#10b981' },
-                unknown: { label: '판정 미완료', color: '#64748b' },
-              }[status];
-              const savedUrls = item.image_url ? item.image_url.split(',').filter(Boolean) : [];
-              const reportDate = new Date(item.created_at).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
+            {/* 목록 상단 뷰 전환 토글 (목록으로 보기 <-> 지도에서 보기) */}
+            {!showTrash && (
+              <div
+                style={{
+                  background: theme.cardBg,
+                  border: `1px solid ${theme.border}`,
+                  padding: '10px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '10px',
+                  borderRadius: '0',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 'bold', color: theme.textSub }}>뷰 전환:</span>
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      background: theme.btnCancel,
+                      padding: '3px',
+                      borderRadius: '4px',
+                      border: `1px solid ${theme.border}`,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setPastViewMode('list')}
+                      style={{
+                        padding: '6px 14px',
+                        fontSize: '12.5px',
+                        fontWeight: pastViewMode === 'list' ? 'bold' : 'normal',
+                        background: pastViewMode === 'list' ? '#2563eb' : 'transparent',
+                        color: pastViewMode === 'list' ? '#ffffff' : theme.textMain,
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <span>📋 목록으로 보기</span>
+                      <span style={{ fontSize: '11px', opacity: 0.85 }}>({activeReports.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPastViewMode('map')}
+                      style={{
+                        padding: '6px 14px',
+                        fontSize: '12.5px',
+                        fontWeight: pastViewMode === 'map' ? 'bold' : 'normal',
+                        background: pastViewMode === 'map' ? '#ef4444' : 'transparent',
+                        color: pastViewMode === 'map' ? '#ffffff' : theme.textMain,
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <span>🗺️ 지도에서 보기</span>
+                      <span style={{ fontSize: '10.5px', background: 'rgba(0,0,0,0.2)', padding: '1px 5px', borderRadius: '3px' }}>
+                        위험 위치
+                      </span>
+                    </button>
+                  </div>
+                </div>
 
-              return (
-                <div key={item.id} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '0', overflow: 'hidden' }}>
-                  <div onClick={() => setExpandedReportId(isExpanded ? null : item.id)} style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', background: isExpanded ? theme.mdTableHead : 'transparent' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ fontSize: '12px', color: theme.textSub }}>
+                  {pastViewMode === 'map' ? (
+                    <span>📍 현장 GPS 위치 기반 위험 요소 분석 대시보드</span>
+                  ) : (
+                    <span>📄 점검일자별 보고서 전문 및 인쇄/PDF</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 지도 모드일 때: 인터랙티브 위험 지도 컴포넌트 렌더링 */}
+            {!showTrash && pastViewMode === 'map' && (
+              <HazardMapDashboard
+                reports={activeReports}
+                onSelectReport={(id) => {
+                  setPastViewMode('list');
+                  setExpandedReportId(id);
+                  setTimeout(() => {
+                    const el = document.getElementById(`report-card-${id}`);
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }, 150);
+                }}
+                onPhotoClick={(photos, idx) => {
+                  setLightboxImages(photos);
+                  setLightboxIndex(idx);
+                  setLightboxTitle('현장 안전점검 사진');
+                  setLightboxOpen(true);
+                }}
+                theme={theme}
+              />
+            )}
+
+            {/* 목록 모드이거나 휴지통일 때: 기존 보고서 카드 목록 렌더링 */}
+            {(showTrash || pastViewMode === 'list') && (
+              <>
+                {displayReports.length === 0 && (
+                  <div style={{ padding: '30px', textAlign: 'center', color: theme.textSub }}>{showTrash ? '휴지통이 비어있습니다.' : '저장된 과거 기록이 없습니다.'}</div>
+                )}
+                {displayReports.map((item) => {
+                  const isExpanded = expandedReportId === item.id;
+                  const status = analyzeReport(item.ai_report_text || '');
+                  const statusView = {
+                    danger: { label: '⚠️ 위험요소 검출', color: '#ef4444' },
+                    ok: { label: '✅ 전체 양호', color: '#10b981' },
+                    unknown: { label: '판정 미완료', color: '#64748b' },
+                  }[status];
+                  const savedUrls = item.image_url ? item.image_url.split(',').filter(Boolean) : [];
+                  const reportDate = new Date(item.created_at).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
+
+                  return (
+                    <div key={item.id} id={`report-card-${item.id}`} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: '0', overflow: 'hidden' }}>
+                      <div onClick={() => setExpandedReportId(isExpanded ? null : item.id)} style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', background: isExpanded ? theme.mdTableHead : 'transparent' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <strong style={{ color: theme.textMain, fontSize: '15px' }}>{reportDate} 점검</strong>
                       <span style={{ padding: '4px 8px', fontSize: '11px', background: statusView.color, color: 'white', borderRadius: '4px', fontWeight: 'bold' }}>{statusView.label}</span>
                     </div>
@@ -1204,6 +1674,8 @@ function DashboardContent() {
                 </div>
               );
             })}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -1214,7 +1686,18 @@ function DashboardContent() {
         const pastPhotos = printItem.image_url ? printItem.image_url.split(',').filter(Boolean) : [];
 
         return (
-          <div className="print-area-1page print-only" style={{ background: '#ffffff', color: '#000000', width: '100%' }}>
+          <div
+            id="past-report-print-wrapper"
+            className="print-area-1page print-only"
+            style={{
+              background: '#ffffff',
+              color: '#000000',
+              width: '100%',
+              maxWidth: '740px',
+              margin: '0 auto',
+              boxSizing: 'border-box',
+            }}
+          >
             <OnePageReport
               id="past-report-a4-pdf"
               reportText={printItem.ai_report_text || ''}
